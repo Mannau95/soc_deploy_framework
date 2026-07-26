@@ -1,0 +1,19 @@
+name: wazuh
+version: "4.7.5"
+description: "Wazuh SIEM & XDR stack"
+modes:
+  single-node:
+    description: "All-in-one : indexer, manager, dashboard sur un seul hôte"
+    prerequisites:
+      docker: true
+      ports: [443, 55000, 1514, 1515, 1516]
+    templates:
+      - docker-compose.yml.j2
+    post_install:
+      healthcheck:
+        type: http
+        url: "https://localhost"
+        expected_status: 200
+        timeout: 120
+        retries: 15
+        interval: 10
