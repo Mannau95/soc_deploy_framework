@@ -1,73 +1,26 @@
 version: '3.7'
 
 services:
-  wazuh.indexer:
-    image: wazuh/wazuh-indexer:4.7.5
-    hostname: wazuh.indexer
+  wazuh:
+    image: wazuh/wazuh:4.7.5
+    hostname: wazuh
     restart: always
-    environment:
-      - "OPENSEARCH_JAVA_OPTS=-Xms1g -Xmx1g"
     ports:
-      - "9200:9200"
-    volumes:
-      - wazuh-indexer-data:/var/lib/wazuh-indexer
-      - ./config/wazuh-indexer/opensearch.yml:/usr/share/wazuh-indexer/opensearch.yml
-      - ./certs/wazuh-indexer:/usr/share/wazuh-indexer/certs
-    healthcheck:
-      test: ["CMD-SHELL", "curl -f -k https://localhost:9200 || exit 1"]
-      interval: 10s
-      timeout: 10s
-      retries: 30
-
-  wazuh.manager:
-    image: wazuh/wazuh-manager:4.7.5
-    hostname: wazuh.manager
-    restart: always
-    depends_on:
-      wazuh.indexer:
-        condition: service_healthy
-    environment:
-      - "WAZUH_ALERTS_INDEX=wazuh-alerts"
-    ports:
+      - "443:443"
       - "1514:1514/udp"
       - "1515:1515"
-      - "1516:1516"
       - "55000:55000"
-    volumes:
-      - ./config/wazuh-manager/ossec.conf:/var/ossec/etc/ossec.conf
-      - wazuh-manager-data:/var/ossec/data
-      - ./certs/wazuh-manager:/var/ossec/etc/certs
-    healthcheck:
-      test: ["CMD-SHELL", "/var/ossec/bin/wazuh-control status | grep -q 'wazuh-modulesd is running'"]
-      interval: 10s
-      timeout: 10s
-      retries: 30
-
-  wazuh.dashboard:
-    image: wazuh/wazuh-dashboard:4.7.5
-    hostname: wazuh.dashboard
-    restart: always
-    depends_on:
-      wazuh.indexer:
-        condition: service_healthy
-    ports:
-      - "443:5601"
     environment:
-      - "INDEXER_URL=https://wazuh.indexer:9200"
-      - "WAZUH_API_URL=https://wazuh.manager:55000"
-      - "DASHBOARD_USERNAME=kibanaserver"
-      - "DASHBOARD_PASSWORD={{ admin_password }}"
-      - "API_USERNAME=wazuh-wui"
-      - "API_PASSWORD={{ admin_password }}"
+      - WAZUH_MANAGER_PASSWORD={{ admin_password }}
+      - WAZUH_INDEXER_PASSWORD={{ admin_password }}
+      - WAZUH_DASHBOARD_PASSWORD={{ admin_password }}
     volumes:
-      - ./config/wazuh-dashboard/opensearch_dashboards.yml:/usr/share/wazuh-dashboard/config/opensearch_dashboards.yml
-      - ./certs/wazuh-dashboard:/usr/share/wazuh-dashboard/certs
+      - wazuh-data:/var/ossec/data
     healthcheck:
-      test: ["CMD-SHELL", "curl -f -k https://localhost:5601 || exit 1"]
+      test: ["CMD-SHELL", "curl -f -k https://localhost || exit 1"]
       interval: 10s
       timeout: 10s
       retries: 30
 
 volumes:
-  wazuh-indexer-data:
-  wazuh-manager-data:
+  wazuh-data:

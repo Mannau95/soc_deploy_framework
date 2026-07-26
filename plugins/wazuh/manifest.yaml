@@ -1,12 +1,12 @@
 name: wazuh
 version: "4.7.5"
-description: "Wazuh SIEM & XDR stack"
+description: "Wazuh SIEM (all-in-one pour MVP)"
 modes:
   single-node:
-    description: "All-in-one : indexer, manager, dashboard sur un seul hôte"
+    description: "All-in-one : un seul conteneur indexer+manager+dashboard"
     prerequisites:
       docker: true
-      ports: [443, 55000, 1514, 1515, 1516]
+      ports: [443, 1514, 1515, 55000]
     templates:
       - docker-compose.yml.j2
     post_install:
