@@ -88,7 +88,7 @@ services:
       - "DASHBOARD_USERNAME=kibanaserver"
       - "DASHBOARD_PASSWORD={{ admin_password }}"
     healthcheck:
-      test: ["CMD", "curl", "-f", "-k", "https://localhost:5601"]
+      test: ["CMD", "curl", "-f", "-k", "-u", "admin:admin", "https://localhost:9200"]
       interval: 10s
       timeout: 10s
       retries: 30
