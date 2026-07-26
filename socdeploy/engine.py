@@ -17,7 +17,7 @@ import time
 import json
 import sys
 from pathlib import Path
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, Tuple
 
 import yaml
 import docker
@@ -34,7 +34,7 @@ from loguru import logger
 
 class HealthcheckConfig(BaseModel):
     """Configuration d'un healthcheck dans un manifeste."""
-    type: str  # "http" ou "command"
+    type: str
     url: Optional[str] = None
     command: Optional[str] = None
     expected_status: Optional[int] = None
@@ -46,7 +46,7 @@ class HealthcheckConfig(BaseModel):
 class ModeConfig(BaseModel):
     """Un mode d'installation pour un outil."""
     description: str
-    prerequisites: Dict[str, Any]  # docker: bool, ports: [int]
+    prerequisites: Dict[str, Any]
     templates: List[str]
     post_install: Optional[Dict[str, HealthcheckConfig]] = None
 
@@ -84,7 +84,6 @@ class SOCDeployEngine:
         self.report: Dict[str, Any] = {"success": True, "services": []}
         self.docker_client = None
 
-        # Configuration du logger
         logger.remove()
         logger.add(sys.stderr, level="INFO", format="<green>{time}</green> | <level>{message}</level>")
 
@@ -194,7 +193,6 @@ class SOCDeployEngine:
         for template_name in mode_config.templates:
             try:
                 template = env.get_template(template_name)
-                # Le nom de fichier de sortie enlève l'extension .j2
                 out_name = template_name[:-3] if template_name.endswith('.j2') else template_name
                 output_path = output_dir / out_name
                 content = template.render(variables)
@@ -206,26 +204,35 @@ class SOCDeployEngine:
                 raise
         return output_dir
 
-    def prepare_plugin(self, plugin_name: str, mode: str, output_dir: Path, variables: Dict[str, Any]) -> None:
+    # -----------------------------------------------------------------------
+    # Préparation du plugin (certificats, configs statiques)
+    # -----------------------------------------------------------------------
+
+    def prepare_plugin(
+        self,
+        plugin_name: str,
+        mode: str,
+        output_dir: Path,
+        variables: Dict[str, Any]
+    ) -> None:
         """Exécute le script de préparation du plugin s'il existe."""
-        prepare_script = self.plugins_dir / plugin_name / "prepare.py"
+        prepare_script: Path = self.plugins_dir / plugin_name / "prepare.py"
         if not prepare_script.exists():
             logger.info(f"Aucun script de préparation pour {plugin_name}")
             return
 
-    logger.info(f"Exécution du script de préparation pour {plugin_name}")
-    try:
-        # On exécute le script dans un sous-processus pour l'isoler
-        result = subprocess.run(
-            [sys.executable, str(prepare_script), str(output_dir), json.dumps(variables)],
-            check=True,
-            capture_output=True,
-            text=True
-        )
-        logger.info(f"Préparation terminée : {result.stdout}")
-    except subprocess.CalledProcessError as e:
-        logger.error(f"Échec du script de préparation pour {plugin_name}: {e.stderr}")
-        raise
+        logger.info(f"Exécution du script de préparation pour {plugin_name}")
+        try:
+            result: subprocess.CompletedProcess = subprocess.run(
+                [sys.executable, str(prepare_script), str(output_dir), json.dumps(variables)],
+                check=True,
+                capture_output=True,
+                text=True
+            )
+            logger.info(f"Préparation terminée : {result.stdout}")
+        except subprocess.CalledProcessError as e:
+            logger.error(f"Échec du script de préparation pour {plugin_name}: {e.stderr}")
+            raise
 
     # -----------------------------------------------------------------------
     # Déploiement via Docker Compose
@@ -313,7 +320,6 @@ class SOCDeployEngine:
 
     def collect_service_info(self, plugin_name: str, mode: str) -> Dict[str, Any]:
         """Collecte les informations sur le service déployé pour le rapport."""
-        # Ici on peut extraire des URL, identifiants, ports depuis le manifeste ou les templates.
         manifest = self.manifests[plugin_name]
         mode_config = manifest.modes[mode]
         info = {
@@ -327,7 +333,7 @@ class SOCDeployEngine:
         pre = mode_config.prerequisites
         ports = pre.get("ports", [])
         if ports:
-            info["urls"].append(f"localhost:{ports[0]}")  # simplifié
+            info["urls"].append(f"localhost:{ports[0]}")
         return info
 
     def generate_report(self) -> str:
@@ -338,7 +344,6 @@ class SOCDeployEngine:
             template = env.get_template("report.md.j2")
             content = template.render(report=self.report, config=self.user_config)
         else:
-            # Rapport par défaut si pas de template
             content = f"# Rapport de déploiement {self.user_config.stack_name}\n\n"
             for svc in self.report["services"]:
                 content += f"- **{svc['plugin']}** ({svc['mode']}) : {svc['description']}\n"
@@ -357,46 +362,33 @@ class SOCDeployEngine:
     def deploy(self) -> str:
         """Méthode principale : orchestre tout le déploiement."""
         try:
-            # 1. Chargement
             self.load_config()
             self.load_all_manifests()
-
-            # 2. Validation
             self.validate_prerequisites()
-
-            # 3. Création du répertoire de travail
             self.setup_deploy_directory()
 
-            # 4. Pour chaque outil : rendu templates, docker compose, healthcheck
             for tool in self.user_config.tools:
-                logger.info(f"--- Déploiement de {tool.plugin} en mode {tool.mode} ---")
                 plugin_name = tool.plugin
                 mode = tool.mode
                 variables = tool.variables
-
-                # Ajouter des variables globales utiles (ex: stack_name)
                 variables["stack_name"] = self.user_config.stack_name
 
-                # Rendu
+                logger.info(f"--- Déploiement de {plugin_name} en mode {mode} ---")
                 compose_dir = self.render_templates(plugin_name, mode, variables)
 
-                # Préparation (certificats, configs statiques, etc.)
+                # Préparation (certificats, configs)
                 self.prepare_plugin(plugin_name, mode, compose_dir, variables)
 
-                # Docker compose up
                 self.docker_compose_up(compose_dir)
 
-                # Healthcheck
                 if not self.perform_healthcheck(plugin_name, mode, compose_dir):
                     self.report["success"] = False
                     raise RuntimeError(f"Healthcheck échoué pour {plugin_name}")
 
-                # Collecte info pour le rapport
                 service_info = self.collect_service_info(plugin_name, mode)
                 service_info["status"] = "running"
                 self.report["services"].append(service_info)
 
-            # 5. Rapport final
             report_path = self.generate_report()
             logger.info(f"Déploiement terminé avec succès. Rapport : {report_path}")
             return report_path
@@ -405,11 +397,9 @@ class SOCDeployEngine:
             logger.error(f"Échec du déploiement : {e}")
             self.report["success"] = False
             self.report["error"] = str(e)
-            # Rollback basique : suppression du répertoire
             if self.deploy_dir and self.deploy_dir.exists():
                 logger.warning(f"Rollback : suppression de {self.deploy_dir}")
                 shutil.rmtree(self.deploy_dir, ignore_errors=True)
-            # On tente de générer un rapport d'erreur malgré tout
             try:
                 if self.deploy_dir:
                     self.generate_report()
