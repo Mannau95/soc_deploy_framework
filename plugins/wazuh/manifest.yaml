@@ -1,12 +1,12 @@
 name: wazuh
-version: "4.7.5"
-description: "Wazuh SIEM (all-in-one pour MVP)"
+version: "4.14.0"
+description: "Wazuh SIEM stack (single-node officiel)"
 modes:
   single-node:
-    description: "All-in-one : un seul conteneur indexer+manager+dashboard"
+    description: "Indexer + Manager + Dashboard sur un seul hôte"
     prerequisites:
       docker: true
-      ports: [443, 1514, 1515, 55000]
+      ports: [443, 55000, 1514, 1515, 1516]
     templates:
       - docker-compose.yml.j2
     post_install:
@@ -14,6 +14,6 @@ modes:
         type: http
         url: "https://localhost"
         expected_status: 200
-        timeout: 120
-        retries: 15
-        interval: 10
+        timeout: 300
+        retries: 20
+        interval: 15

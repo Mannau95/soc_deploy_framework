@@ -1,26 +1,73 @@
 version: '3.7'
 
 services:
-  wazuh:
-    image: wazuh/wazuh:4.7.5
-    hostname: wazuh
+  wazuh.indexer:
+    image: wazuh/wazuh-indexer:4.14.0
+    hostname: wazuh.indexer
     restart: always
+    environment:
+      - "OPENSEARCH_JAVA_OPTS=-Xms1g -Xmx1g"
+    volumes:
+      - wazuh-indexer-data:/var/lib/wazuh-indexer
+      - ./config/wazuh-indexer/opensearch.yml:/usr/share/wazuh-indexer/opensearch.yml
+      - ./certs/wazuh-indexer/ca.pem:/usr/share/wazuh-indexer/certs/ca.pem
+      - ./certs/wazuh-indexer/wazuh-indexer.pem:/usr/share/wazuh-indexer/certs/wazuh-indexer.pem
+      - ./certs/wazuh-indexer/wazuh-indexer.key:/usr/share/wazuh-indexer/certs/wazuh-indexer.key
+    healthcheck:
+      test: ["CMD", "curl", "-f", "-k", "https://localhost:9200"]
+      interval: 10s
+      timeout: 10s
+      retries: 30
+
+  wazuh.manager:
+    image: wazuh/wazuh-manager:4.14.0
+    hostname: wazuh.manager
+    restart: always
+    depends_on:
+      wazuh.indexer:
+        condition: service_healthy
     ports:
-      - "443:443"
       - "1514:1514/udp"
       - "1515:1515"
+      - "1516:1516"
       - "55000:55000"
-    environment:
-      - WAZUH_MANAGER_PASSWORD={{ admin_password }}
-      - WAZUH_INDEXER_PASSWORD={{ admin_password }}
-      - WAZUH_DASHBOARD_PASSWORD={{ admin_password }}
     volumes:
-      - wazuh-data:/var/ossec/data
+      - wazuh-manager-data:/var/ossec/data
+      - ./config/wazuh-manager/ossec.conf:/var/ossec/etc/ossec.conf
+      - ./certs/wazuh-manager/ca.pem:/var/ossec/etc/certs/ca.pem
+      - ./certs/wazuh-manager/wazuh-manager.pem:/var/ossec/etc/certs/wazuh-manager.pem
+      - ./certs/wazuh-manager/wazuh-manager.key:/var/ossec/etc/certs/wazuh-manager.key
+    environment:
+      - "WAZUH_ALERTS_INDEX=wazuh-alerts"
     healthcheck:
-      test: ["CMD-SHELL", "curl -f -k https://localhost || exit 1"]
+      test: ["CMD", "/var/ossec/bin/wazuh-control", "status"]
+      interval: 10s
+      timeout: 10s
+      retries: 30
+
+  wazuh.dashboard:
+    image: wazuh/wazuh-dashboard:4.14.0
+    hostname: wazuh.dashboard
+    restart: always
+    depends_on:
+      wazuh.indexer:
+        condition: service_healthy
+    ports:
+      - "443:5601"
+    volumes:
+      - ./config/wazuh-dashboard/opensearch_dashboards.yml:/usr/share/wazuh-dashboard/config/opensearch_dashboards.yml
+      - ./certs/wazuh-dashboard/ca.pem:/usr/share/wazuh-dashboard/certs/ca.pem
+      - ./certs/wazuh-dashboard/wazuh-dashboard.pem:/usr/share/wazuh-dashboard/certs/wazuh-dashboard.pem
+      - ./certs/wazuh-dashboard/wazuh-dashboard.key:/usr/share/wazuh-dashboard/certs/wazuh-dashboard.key
+    environment:
+      - "DASHBOARD_USERNAME=kibanaserver"
+      - "DASHBOARD_PASSWORD={{ admin_password }}"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "-k", "https://localhost:5601"]
       interval: 10s
       timeout: 10s
       retries: 30
 
 volumes:
-  wazuh-data:
+  wazuh-indexer-data:
+  wazuh-manager-data:
