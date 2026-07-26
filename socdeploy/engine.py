@@ -333,7 +333,7 @@ class SOCDeployEngine:
             logger.info(f"Pas de healthcheck pour {plugin_name}")
             return True
 
-        hc = HealthcheckConfig(**post["healthcheck"])
+        hc = post["healthcheck"]
         logger.info(f"Healthcheck pour {plugin_name}: type={hc.type}")
         if hc.type == "http":
             return self._http_healthcheck(hc)
