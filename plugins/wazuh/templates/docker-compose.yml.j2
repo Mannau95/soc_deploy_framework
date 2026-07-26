@@ -13,18 +13,12 @@ services:
       - ./certs/wazuh-indexer/ca.pem:/usr/share/wazuh-indexer/certs/ca.pem
       - ./certs/wazuh-indexer/wazuh-indexer.pem:/usr/share/wazuh-indexer/certs/wazuh-indexer.pem
       - ./certs/wazuh-indexer/wazuh-indexer.key:/usr/share/wazuh-indexer/certs/wazuh-indexer.key
-    healthcheck:
-      test: ["CMD", "curl", "-f", "-k", "https://localhost:9200"]
-      interval: 10s
-      timeout: 10s
-      retries: 30
 
   wazuh.indexer-init:
     image: wazuh/wazuh-indexer:4.14.0
     hostname: wazuh.indexer-init
     depends_on:
-      wazuh.indexer:
-        condition: service_healthy
+      - wazuh.indexer
     environment:
       - "OPENSEARCH_JAVA_OPTS=-Xms128m -Xmx128m"
     volumes:
@@ -34,14 +28,17 @@ services:
       - ./config/wazuh-indexer/internal_users.yml:/usr/share/wazuh-indexer/opensearch-security/internal_users.yml
     command: >
       bash -c "
-        until curl -k -u admin:admin https://wazuh.indexer:9200/_cluster/health; do sleep 10; done;
+        echo 'Attente que wazuh.indexer réponde...';
+        until curl -k -u admin:admin https://wazuh.indexer:9200/_cluster/health; do sleep 5; done;
+        echo 'Indexer joignable, lancement de securityadmin...';
         /usr/share/wazuh-indexer/plugins/opensearch-security/tools/securityadmin.sh \
           -cd /usr/share/wazuh-indexer/opensearch-security/ \
           -icl -nhnv \
           -cacert /usr/share/wazuh-indexer/certs/ca.pem \
           -cert /usr/share/wazuh-indexer/certs/wazuh-indexer.pem \
           -key /usr/share/wazuh-indexer/certs/wazuh-indexer.key \
-          -h wazuh.indexer
+          -h wazuh.indexer;
+        echo 'Initialisation terminée.'
       "
 
   wazuh.manager:
@@ -88,7 +85,7 @@ services:
       - "DASHBOARD_USERNAME=kibanaserver"
       - "DASHBOARD_PASSWORD={{ admin_password }}"
     healthcheck:
-      test: ["CMD", "curl", "-f", "-k", "-u", "admin:admin", "https://localhost:9200"]
+      test: ["CMD", "curl", "-f", "-k", "https://localhost:5601"]
       interval: 10s
       timeout: 10s
       retries: 30
