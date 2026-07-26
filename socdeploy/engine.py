@@ -323,3 +323,22 @@ class SOCDeployEngine:
             except:
                 pass
             raise
+    
+    def perform_healthcheck(self, plugin_name: str, mode: str, output_dir: Path) -> bool:
+        """Exécute le healthcheck défini dans le manifeste du plugin."""
+        manifest = self.manifests[plugin_name]
+        mode_config = manifest.modes[mode]
+        post = mode_config.post_install
+        if not post or "healthcheck" not in post:
+            logger.info(f"Pas de healthcheck pour {plugin_name}")
+            return True
+
+        hc = HealthcheckConfig(**post["healthcheck"])
+        logger.info(f"Healthcheck pour {plugin_name}: type={hc.type}")
+        if hc.type == "http":
+            return self._http_healthcheck(hc)
+        elif hc.type == "command":
+            return self._command_healthcheck(hc, output_dir)
+        else:
+            logger.error(f"Type de healthcheck inconnu: {hc.type}")
+            return False
