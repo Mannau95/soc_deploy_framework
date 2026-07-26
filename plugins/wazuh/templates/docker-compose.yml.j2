@@ -6,25 +6,19 @@ services:
     hostname: wazuh.indexer
     restart: always
     environment:
-      - "OPENSEARCH_JAVA_OPTS=-Xms1g -Xmx1g"
+      - "OPENSEARCH_JAVA_OPTS=-Xms512m -Xmx512m"
     volumes:
       - wazuh-indexer-data:/var/lib/wazuh-indexer
       - ./config/wazuh-indexer/opensearch.yml:/usr/share/wazuh-indexer/opensearch.yml
       - ./certs/wazuh-indexer/ca.pem:/usr/share/wazuh-indexer/certs/ca.pem
       - ./certs/wazuh-indexer/wazuh-indexer.pem:/usr/share/wazuh-indexer/certs/wazuh-indexer.pem
       - ./certs/wazuh-indexer/wazuh-indexer.key:/usr/share/wazuh-indexer/certs/wazuh-indexer.key
-    healthcheck:
-      test: ["CMD", "curl", "-f", "-k", "-u", "admin:admin", "https://localhost:9200"]
-      interval: 10s
-      timeout: 10s
-      retries: 30
 
   wazuh.indexer-init:
     image: wazuh/wazuh-indexer:4.14.0
     hostname: wazuh.indexer-init
     depends_on:
-      wazuh.indexer:
-        condition: service_healthy
+      - wazuh.indexer
     volumes:
       - ./certs/wazuh-indexer/ca.pem:/usr/share/wazuh-indexer/certs/ca.pem
       - ./certs/wazuh-indexer/wazuh-indexer.pem:/usr/share/wazuh-indexer/certs/wazuh-indexer.pem
@@ -35,14 +29,18 @@ services:
       - ./config/wazuh-indexer/action_groups.yml:/usr/share/wazuh-indexer/opensearch-security/action_groups.yml
     command: >
       bash -c "
-        echo 'Initialisation de l index de sécurité...';
+        echo 'Attente que wazuh.indexer soit prêt...'
+        until curl -k -u admin:admin https://wazuh.indexer:9200/_cluster/health 2>/dev/null | grep -q 'green\|yellow'; do
+          sleep 10
+        done
+        echo 'Indexer prêt, lancement de securityadmin...'
         /usr/share/wazuh-indexer/plugins/opensearch-security/tools/securityadmin.sh \
           -cd /usr/share/wazuh-indexer/opensearch-security/ \
           -icl -nhnv \
           -cacert /usr/share/wazuh-indexer/certs/ca.pem \
           -cert /usr/share/wazuh-indexer/certs/wazuh-indexer.pem \
           -key /usr/share/wazuh-indexer/certs/wazuh-indexer.key \
-          -h wazuh.indexer;
+          -h wazuh.indexer
         echo 'Initialisation terminée.'
       "
 
