@@ -6,7 +6,7 @@ services:
     hostname: wazuh.indexer
     restart: always
     environment:
-      - "OPENSEARCH_JAVA_OPTS=-Xms1g -Xmx1g"
+      - "OPENSEARCH_JAVA_OPTS=-Xms512m -Xmx512m"
     volumes:
       - wazuh-indexer-data:/var/lib/wazuh-indexer
       - ./config/wazuh-indexer/opensearch.yml:/usr/share/wazuh-indexer/opensearch.yml
@@ -19,13 +19,38 @@ services:
       timeout: 10s
       retries: 30
 
+  wazuh.indexer-init:
+    image: wazuh/wazuh-indexer:4.14.0
+    hostname: wazuh.indexer-init
+    depends_on:
+      wazuh.indexer:
+        condition: service_healthy
+    environment:
+      - "OPENSEARCH_JAVA_OPTS=-Xms128m -Xmx128m"
+    volumes:
+      - ./certs/wazuh-indexer/ca.pem:/usr/share/wazuh-indexer/certs/ca.pem
+      - ./certs/wazuh-indexer/wazuh-indexer.pem:/usr/share/wazuh-indexer/certs/wazuh-indexer.pem
+      - ./certs/wazuh-indexer/wazuh-indexer.key:/usr/share/wazuh-indexer/certs/wazuh-indexer.key
+      - ./config/wazuh-indexer/internal_users.yml:/usr/share/wazuh-indexer/opensearch-security/internal_users.yml
+    command: >
+      bash -c "
+        until curl -k -u admin:admin https://wazuh.indexer:9200/_cluster/health; do sleep 10; done;
+        /usr/share/wazuh-indexer/plugins/opensearch-security/tools/securityadmin.sh \
+          -cd /usr/share/wazuh-indexer/opensearch-security/ \
+          -icl -nhnv \
+          -cacert /usr/share/wazuh-indexer/certs/ca.pem \
+          -cert /usr/share/wazuh-indexer/certs/wazuh-indexer.pem \
+          -key /usr/share/wazuh-indexer/certs/wazuh-indexer.key \
+          -h wazuh.indexer
+      "
+
   wazuh.manager:
     image: wazuh/wazuh-manager:4.14.0
     hostname: wazuh.manager
     restart: always
     depends_on:
-      wazuh.indexer:
-        condition: service_healthy
+      wazuh.indexer-init:
+        condition: service_completed_successfully
     ports:
       - "1514:1514/udp"
       - "1515:1515"
@@ -50,8 +75,8 @@ services:
     hostname: wazuh.dashboard
     restart: always
     depends_on:
-      wazuh.indexer:
-        condition: service_healthy
+      wazuh.indexer-init:
+        condition: service_completed_successfully
     ports:
       - "443:5601"
     volumes:
