@@ -342,3 +342,42 @@ class SOCDeployEngine:
         else:
             logger.error(f"Type de healthcheck inconnu: {hc.type}")
             return False
+        
+    def _http_healthcheck(self, hc: HealthcheckConfig) -> bool:
+        """Healthcheck par appel HTTP."""
+        import requests
+        import time
+        for i in range(hc.retries):
+            try:
+                resp = requests.get(hc.url, timeout=hc.timeout, verify=False)
+                if resp.status_code == hc.expected_status:
+                    logger.info(f"Healthcheck HTTP OK ({hc.url})")
+                    return True
+            except requests.RequestException:
+                pass
+            logger.info(f"Tentative {i+1}/{hc.retries} échouée, attente {hc.interval}s")
+            time.sleep(hc.interval)
+        logger.error(f"Healthcheck HTTP échoué pour {hc.url}")
+        return False
+
+    def _command_healthcheck(self, hc: HealthcheckConfig, cwd: Path) -> bool:
+        """Healthcheck par exécution d'une commande shell."""
+        import subprocess
+        import time
+        for i in range(hc.retries):
+            try:
+                result = subprocess.run(
+                    hc.command, shell=True, cwd=str(cwd),
+                    capture_output=True, text=True, timeout=hc.timeout
+                )
+                if hc.expected_stdout and hc.expected_stdout in result.stdout:
+                    logger.info("Healthcheck commande OK")
+                    return True
+                elif result.returncode == 0:
+                    logger.info("Healthcheck commande OK (code 0)")
+                    return True
+            except subprocess.TimeoutExpired:
+                pass
+            time.sleep(hc.interval)
+        logger.error("Healthcheck commande échoué")
+        return False
