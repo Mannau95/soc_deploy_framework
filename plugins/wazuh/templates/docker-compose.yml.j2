@@ -46,7 +46,7 @@ services:
       - ./config/wazuh_dashboard/opensearch_dashboards.yml:/usr/share/wazuh-dashboard/config/opensearch_dashboards.yml
       - ./certs/wazuh_dashboard/ca.pem:/usr/share/wazuh-dashboard/certs/ca.pem
       - ./certs/wazuh_dashboard/wazuh-dashboard.pem:/usr/share/wazuh-dashboard/certs/wazuh-dashboard.pem
-      - ./certs/wazuh_dashboard/wazuh-dashboard.key:/usr/share/wazuh-dashboard/certs/wazuh-dashboard.key
+      - ./certs/wazuh_dashboard/wazuh-dashboard-key.pem:/usr/share/wazuh-dashboard/certs/wazuh-dashboard-key.pem
     environment:
       - "DASHBOARD_USERNAME=kibanaserver"
       - "DASHBOARD_PASSWORD={{ admin_password }}"

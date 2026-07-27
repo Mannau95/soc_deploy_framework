@@ -45,14 +45,13 @@ def main():
     run("docker-compose -f generate-indexer-certs.yml run --rm generator", cwd=str(deploy_dir))
     print("Certificats générés avec succès.")
     
-        # Renommer la clé privée du dashboard pour correspondre au nom attendu par le conteneur
+    # Renommer la clé privée du dashboard (le conteneur attend wazuh-dashboard-key.pem)
     dashboard_key = deploy_dir / "certs" / "wazuh_dashboard" / "wazuh-dashboard.key"
-    dashboard_key_renamed = deploy_dir / "certs" / "wazuh_dashboard" / "wazuh-dashboard-key.pem"
+    dashboard_key_pem = deploy_dir / "certs" / "wazuh_dashboard" / "wazuh-dashboard-key.pem"
     if dashboard_key.exists():
-        dashboard_key.rename(dashboard_key_renamed)
+        dashboard_key.rename(dashboard_key_pem)
         print("Clé dashboard renommée en wazuh-dashboard-key.pem")
     else:
         print("Attention : clé dashboard non trouvée, vérifiez la génération des certificats.")
-
 if __name__ == "__main__":
     main()
