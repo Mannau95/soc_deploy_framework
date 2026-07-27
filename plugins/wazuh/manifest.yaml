@@ -1,9 +1,9 @@
 name: wazuh
 version: "4.14.0"
-description: "Wazuh SIEM stack (single-node officiel)"
+description: "Wazuh SIEM (single-node officiel)"
 modes:
   single-node:
-    description: "Indexer + Manager + Dashboard sur un seul hôte"
+    description: "Indexer + Manager + Dashboard"
     prerequisites:
       docker: true
       ports: [443, 55000, 1514, 1515, 1516]
