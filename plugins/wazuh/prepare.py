@@ -46,12 +46,18 @@ def main():
     print("Certificats générés avec succès.")
     
     # Renommer la clé privée du dashboard (le conteneur attend wazuh-dashboard-key.pem)
-    dashboard_key = deploy_dir / "certs" / "wazuh_dashboard" / "wazuh-dashboard.key"
-    dashboard_key_pem = deploy_dir / "certs" / "wazuh_dashboard" / "wazuh-dashboard-key.pem"
-    if dashboard_key.exists():
-        dashboard_key.rename(dashboard_key_pem)
+    dashboard_certs_dir = deploy_dir / "certs" / "wazuh_dashboard"
+    wrong_key = dashboard_certs_dir / "wazuh-dashboard.key"
+    right_key = dashboard_certs_dir / "wazuh-dashboard-key.pem"
+    if wrong_key.exists():
+        wrong_key.rename(right_key)
         print("Clé dashboard renommée en wazuh-dashboard-key.pem")
     else:
-        print("Attention : clé dashboard non trouvée, vérifiez la génération des certificats.")
+        # Si le renommage échoue, on liste les fichiers pour diagnostic
+        print("Erreur : clé dashboard introuvable. Contenu du dossier :")
+        for f in dashboard_certs_dir.iterdir():
+            print(f.name)
+        sys.exit(1)
+        
 if __name__ == "__main__":
     main()

@@ -10,9 +10,7 @@ services:
     volumes:
       - wazuh-indexer-data:/var/lib/wazuh-indexer
       - ./config/wazuh_indexer/opensearch.yml:/usr/share/wazuh-indexer/opensearch.yml
-      - ./certs/wazuh_indexer/ca.pem:/usr/share/wazuh-indexer/certs/ca.pem
-      - ./certs/wazuh_indexer/wazuh-indexer.pem:/usr/share/wazuh-indexer/certs/wazuh-indexer.pem
-      - ./certs/wazuh_indexer/wazuh-indexer.key:/usr/share/wazuh-indexer/certs/wazuh-indexer.key
+      - ./certs/wazuh_indexer/:/usr/share/wazuh-indexer/certs/
 
   wazuh.manager:
     image: wazuh/wazuh-manager:4.14.0
@@ -28,9 +26,8 @@ services:
     volumes:
       - wazuh-manager-data:/var/ossec/data
       - ./config/wazuh_cluster/ossec.conf:/var/ossec/etc/ossec.conf
-      - ./certs/wazuh_cluster/ca.pem:/var/ossec/etc/certs/ca.pem
-      - ./certs/wazuh_cluster/wazuh-manager.pem:/var/ossec/etc/certs/wazuh-manager.pem
-      - ./certs/wazuh_cluster/wazuh-manager.key:/var/ossec/etc/certs/wazuh-manager.key
+      - ./certs/wazuh_cluster/:/var/ossec/etc/certs/
+
     environment:
       - "WAZUH_ALERTS_INDEX=wazuh-alerts"
 
@@ -44,9 +41,7 @@ services:
       - "443:5601"
     volumes:
       - ./config/wazuh_dashboard/opensearch_dashboards.yml:/usr/share/wazuh-dashboard/config/opensearch_dashboards.yml
-      - ./certs/wazuh_dashboard/ca.pem:/usr/share/wazuh-dashboard/certs/ca.pem
-      - ./certs/wazuh_dashboard/wazuh-dashboard.pem:/usr/share/wazuh-dashboard/certs/wazuh-dashboard.pem
-      - ./certs/wazuh_dashboard/wazuh-dashboard-key.pem:/usr/share/wazuh-dashboard/certs/wazuh-dashboard-key.pem
+      - ./certs/wazuh_dashboard/:/usr/share/wazuh-dashboard/certs/
     environment:
       - "DASHBOARD_USERNAME=kibanaserver"
       - "DASHBOARD_PASSWORD={{ admin_password }}"
