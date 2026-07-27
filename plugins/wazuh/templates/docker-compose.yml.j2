@@ -25,12 +25,12 @@ services:
       - "1515:1515"
       - "1516:1516"
       - "55000:55000"
-    volumes:
+        volumes:
       - wazuh-manager-data:/var/ossec/data
-      - ./config/wazuh_manager/ossec.conf:/var/ossec/etc/ossec.conf
-      - ./certs/wazuh_manager/ca.pem:/var/ossec/etc/certs/ca.pem
-      - ./certs/wazuh_manager/wazuh-manager.pem:/var/ossec/etc/certs/wazuh-manager.pem
-      - ./certs/wazuh_manager/wazuh-manager.key:/var/ossec/etc/certs/wazuh-manager.key
+      - ./config/wazuh_cluster/ossec.conf:/var/ossec/etc/ossec.conf
+      - ./certs/wazuh_cluster/ca.pem:/var/ossec/etc/certs/ca.pem
+      - ./certs/wazuh_cluster/wazuh-manager.pem:/var/ossec/etc/certs/wazuh-manager.pem
+      - ./certs/wazuh_cluster/wazuh-manager.key:/var/ossec/etc/certs/wazuh-manager.key
     environment:
       - "WAZUH_ALERTS_INDEX=wazuh-alerts"
 
