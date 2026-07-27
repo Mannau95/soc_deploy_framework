@@ -25,7 +25,7 @@ services:
       - "1515:1515"
       - "1516:1516"
       - "55000:55000"
-        volumes:
+    volumes:
       - wazuh-manager-data:/var/ossec/data
       - ./config/wazuh_cluster/ossec.conf:/var/ossec/etc/ossec.conf
       - ./certs/wazuh_cluster/ca.pem:/var/ossec/etc/certs/ca.pem
