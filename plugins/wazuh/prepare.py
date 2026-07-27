@@ -44,20 +44,26 @@ def main():
     print("Génération des certificats...")
     run("docker-compose -f generate-indexer-certs.yml run --rm generator", cwd=str(deploy_dir))
     print("Certificats générés avec succès.")
-    
-    # Renommer la clé privée du dashboard (le conteneur attend wazuh-dashboard-key.pem)
-    dashboard_certs_dir = deploy_dir / "certs" / "wazuh_dashboard"
-    wrong_key = dashboard_certs_dir / "wazuh-dashboard.key"
-    right_key = dashboard_certs_dir / "wazuh-dashboard-key.pem"
-    if wrong_key.exists():
-        wrong_key.rename(right_key)
-        print("Clé dashboard renommée en wazuh-dashboard-key.pem")
+
+    # Vérification que les certificats du dashboard sont présents
+    dashboard_certs_dir = deploy_dir / "certs" / "wazuh-dashboard"
+    required_key = dashboard_certs_dir / "wazuh-dashboard-key.pem"
+    if not required_key.exists():
+        # Tenter de trouver wazuh-dashboard.key et le renommer
+        wrong_key = dashboard_certs_dir / "wazuh-dashboard.key"
+        if wrong_key.exists():
+            wrong_key.rename(required_key)
+            print("Clé dashboard renommée en wazuh-dashboard-key.pem")
+        else:
+            print("Erreur : clé dashboard introuvable. Contenu du dossier :")
+            if dashboard_certs_dir.exists():
+                for f in dashboard_certs_dir.iterdir():
+                    print(f.name)
+            else:
+                print("Le dossier des certificats dashboard n'existe pas.")
+            sys.exit(1)
     else:
-        # Si le renommage échoue, on liste les fichiers pour diagnostic
-        print("Erreur : clé dashboard introuvable. Contenu du dossier :")
-        for f in dashboard_certs_dir.iterdir():
-            print(f.name)
-        sys.exit(1)
-        
+        print("Certificats dashboard vérifiés.")
+
 if __name__ == "__main__":
     main()
