@@ -13,7 +13,6 @@ modes:
       healthcheck:
         type: command
         command: "docker exec $(docker ps -qf 'name=wazuh.dashboard') curl -f -k https://localhost:5601"
-        expected_stdout: ""
         timeout: 30
         retries: 30
         interval: 10

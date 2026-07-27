@@ -1,14 +1,7 @@
 #!/usr/bin/env python3
-"""
-Préparation Wazuh – utilise les outils officiels embarqués.
-1. Copie les configurations.
-2. Lance la génération des certificats via le conteneur officiel.
-"""
+"""Préparation Wazuh – copie configs et génération des certificats."""
 
-import sys
-import json
-import shutil
-import subprocess
+import sys, json, shutil, subprocess
 from pathlib import Path
 
 def run(cmd, cwd=None):
@@ -23,7 +16,7 @@ def main():
     variables = json.loads(sys.argv[2])
     plugin_dir = Path(__file__).resolve().parent
 
-    # 1. Copier les configurations
+    # 1. Copier les configurations (opensearch.yml, ossec.conf, etc.)
     config_src = plugin_dir / "config"
     if not config_src.exists():
         print("Dossier config/ introuvable.")
@@ -33,37 +26,18 @@ def main():
     shutil.copytree(config_src, deploy_dir / "config")
     print("Configurations copiées.")
 
-    # 2. Copier le générateur de certificats
-    certs_gen = plugin_dir / "generate-indexer-certs.yml"
-    if not certs_gen.exists():
-        print("Fichier generate-indexer-certs.yml introuvable.")
-        sys.exit(1)
-    shutil.copy(certs_gen, deploy_dir / "generate-indexer-certs.yml")
+    # 2. Copier le générateur de certificats et son fichier de config
+    for f in ["generate-indexer-certs.yml", "config.yml"]:
+        src = plugin_dir / f
+        if not src.exists():
+            print(f"Fichier {f} introuvable.")
+            sys.exit(1)
+        shutil.copy(src, deploy_dir / f)
 
-    # 3. Générer les certificats via le conteneur officiel
+    # 3. Générer les certificats dans les volumes nommés
     print("Génération des certificats...")
     run("docker-compose -f generate-indexer-certs.yml run --rm generator", cwd=str(deploy_dir))
     print("Certificats générés avec succès.")
-
-    # Vérification que les certificats du dashboard sont présents
-    dashboard_certs_dir = deploy_dir / "certs" / "wazuh-dashboard"
-    required_key = dashboard_certs_dir / "wazuh-dashboard-key.pem"
-    if not required_key.exists():
-        # Tenter de trouver wazuh-dashboard.key et le renommer
-        wrong_key = dashboard_certs_dir / "wazuh-dashboard.key"
-        if wrong_key.exists():
-            wrong_key.rename(required_key)
-            print("Clé dashboard renommée en wazuh-dashboard-key.pem")
-        else:
-            print("Erreur : clé dashboard introuvable. Contenu du dossier :")
-            if dashboard_certs_dir.exists():
-                for f in dashboard_certs_dir.iterdir():
-                    print(f.name)
-            else:
-                print("Le dossier des certificats dashboard n'existe pas.")
-            sys.exit(1)
-    else:
-        print("Certificats dashboard vérifiés.")
 
 if __name__ == "__main__":
     main()

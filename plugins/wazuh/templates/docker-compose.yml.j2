@@ -6,27 +6,41 @@ services:
     hostname: wazuh.indexer
     restart: always
     environment:
-      - "OPENSEARCH_JAVA_OPTS=-Xms1g -Xmx1g"
+      - "OPENSEARCH_JAVA_OPTS=-Xms512m -Xmx512m"
     volumes:
       - wazuh-indexer-data:/var/lib/wazuh-indexer
       - ./config/wazuh_indexer/opensearch.yml:/usr/share/wazuh-indexer/opensearch.yml
-      - ./certs/wazuh-indexer/:/usr/share/wazuh-indexer/certs/
+      - wazuh-indexer-cert:/usr/share/wazuh-indexer/certs
+    healthcheck:
+      test: ["CMD-SHELL", "curl -k -u admin:admin https://localhost:9200"]
+      interval: 10s
+      timeout: 10s
+      retries: 30
 
   wazuh.manager:
     image: wazuh/wazuh-manager:4.14.0
     hostname: wazuh.manager
     restart: always
     depends_on:
-      - wazuh.indexer
+      wazuh.indexer:
+        condition: service_healthy
     ports:
       - "1514:1514/udp"
       - "1515:1515"
       - "1516:1516"
       - "55000:55000"
     volumes:
+      - wazuh-api-configuration:/var/ossec/api/configuration
+      - wazuh-manager-etc:/var/ossec/etc
+      - wazuh-manager-logs:/var/ossec/logs
+      - wazuh-manager-queue:/var/ossec/queue
       - wazuh-manager-data:/var/ossec/data
+      - wazuh-manager-integrations:/var/ossec/integrations
+      - wazuh-manager-active-response:/var/ossec/active-response
+      - wazuh-manager-agentless:/var/ossec/agentless
+      - wazuh-manager-wodles:/var/ossec/wodles
       - ./config/wazuh_cluster/ossec.conf:/var/ossec/etc/ossec.conf
-      - ./certs/wazuh-manager/:/var/ossec/etc/certs/
+      - wazuh-manager-cert:/var/ossec/etc/certs
     environment:
       - "WAZUH_ALERTS_INDEX=wazuh-alerts"
 
@@ -35,16 +49,32 @@ services:
     hostname: wazuh.dashboard
     restart: always
     depends_on:
-      - wazuh.indexer
+      wazuh.indexer:
+        condition: service_healthy
     ports:
       - "443:5601"
     volumes:
+      - wazuh-dashboard-config:/usr/share/wazuh-dashboard/config
+      - wazuh-dashboard-custom:/usr/share/wazuh-dashboard/custom
       - ./config/wazuh_dashboard/opensearch_dashboards.yml:/usr/share/wazuh-dashboard/config/opensearch_dashboards.yml
-      - ./certs/wazuh-dashboard/:/usr/share/wazuh-dashboard/certs/
+      - wazuh-dashboard-cert:/usr/share/wazuh-dashboard/certs
     environment:
       - "DASHBOARD_USERNAME=kibanaserver"
       - "DASHBOARD_PASSWORD={{ admin_password }}"
 
 volumes:
   wazuh-indexer-data:
+  wazuh-indexer-cert:
+  wazuh-api-configuration:
+  wazuh-manager-etc:
+  wazuh-manager-logs:
+  wazuh-manager-queue:
   wazuh-manager-data:
+  wazuh-manager-integrations:
+  wazuh-manager-active-response:
+  wazuh-manager-agentless:
+  wazuh-manager-wodles:
+  wazuh-manager-cert:
+  wazuh-dashboard-config:
+  wazuh-dashboard-custom:
+  wazuh-dashboard-cert:
