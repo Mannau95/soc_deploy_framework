@@ -1,8 +1,15 @@
 #!/usr/bin/env python3
-"""Préparation Wazuh – copie configs, génère certificats, renomme les clés."""
+"""Préparation Wazuh – copie configs et génération des certificats avec openssl."""
 
 import sys, json, shutil, subprocess
 from pathlib import Path
+
+def run(cmd, cwd=None):
+    result = subprocess.run(cmd, shell=True, cwd=cwd, capture_output=True, text=True)
+    if result.returncode != 0:
+        print(f"Erreur: {cmd}\n{result.stderr}")
+        sys.exit(1)
+    return result.stdout.strip()
 
 def main():
     deploy_dir = Path(sys.argv[1])
@@ -19,58 +26,77 @@ def main():
     shutil.copytree(config_src, deploy_dir / "config")
     print("Configurations copiées.")
 
-    # 2. Copier le générateur et certs.yml
-    for f in ["generate-indexer-certs.yml", "certs.yml"]:
-        src = plugin_dir / f
-        if not src.exists():
-            print(f"Fichier {f} introuvable.")
-            sys.exit(1)
-        shutil.copy(src, deploy_dir / f)
-
-    # 3. Créer le dossier local certs/
-    (deploy_dir / "certs").mkdir(exist_ok=True)
-
-    # 4. Générer les certificats (on ignore le code de retour, avertissements fréquents)
-    print("Génération des certificats...")
-    result = subprocess.run(
-        "docker-compose -f generate-indexer-certs.yml run --rm generator",
-        shell=True, cwd=str(deploy_dir), capture_output=True, text=True
-    )
-    if result.stdout:
-        print(result.stdout)
-    if result.stderr:
-        print(result.stderr)
-
+    # 2. Créer les dossiers pour les certificats
     certs_dir = deploy_dir / "certs"
-    # Fichiers minimum attendus (avant renommage)
-    required = [
-        "wazuh-indexer/ca.pem", "wazuh-indexer/wazuh-indexer.pem", "wazuh-indexer/wazuh-indexer.key",
-        "wazuh-manager/ca.pem", "wazuh-manager/wazuh-manager.pem", "wazuh-manager/wazuh-manager.key",
-        "wazuh-dashboard/ca.pem", "wazuh-dashboard/wazuh-dashboard.pem", "wazuh-dashboard/wazuh-dashboard.key",
-    ]
-    missing = [f for f in required if not (certs_dir / f).exists()]
-    if missing:
-        print("Erreur : certificats manquants :")
-        for f in missing:
-            print(f"  - {f}")
-        sys.exit(1)
+    for comp in ["wazuh-indexer", "wazuh-manager", "wazuh-dashboard"]:
+        (certs_dir / comp).mkdir(parents=True, exist_ok=True)
 
-    print("Tous les certificats sont présents.")
+    # 3. Fichier de configuration OpenSSL
+    ssl_conf = certs_dir / "openssl.cnf"
+    ssl_conf.write_text("""
+[ req ]
+default_bits = 2048
+distinguished_name = req_distinguished_name
+x509_extensions = v3_ca
+prompt = no
 
-    # 5. Renommer les clés privées (.key -> -key.pem)
-    renommage = {
-        "wazuh-indexer/wazuh-indexer.key": "wazuh-indexer/wazuh-indexer-key.pem",
-        "wazuh-manager/wazuh-manager.key": "wazuh-manager/wazuh-manager-key.pem",
-        "wazuh-dashboard/wazuh-dashboard.key": "wazuh-dashboard/wazuh-dashboard-key.pem",
+[ req_distinguished_name ]
+C = FR
+ST = IDF
+L = Paris
+O = SOCDeploy
+OU = Wazuh
+CN = wazuh.internal
+
+[ v3_ca ]
+basicConstraints = critical,CA:true
+keyUsage = critical, keyCertSign, cRLSign
+subjectAltName = DNS:wazuh.indexer, DNS:wazuh.manager, DNS:wazuh.dashboard, DNS:localhost, IP:127.0.0.1
+
+[ v3_req ]
+basicConstraints = CA:FALSE
+keyUsage = nonRepudiation, digitalSignature, keyEncipherment
+subjectAltName = @alt_names
+
+[ alt_names ]
+DNS.1 = wazuh.indexer
+DNS.2 = wazuh.manager
+DNS.3 = wazuh.dashboard
+DNS.4 = localhost
+IP.1 = 127.0.0.1
+""")
+
+    # 4. Générer la CA
+    ca_key = certs_dir / "ca-key.pem"
+    ca_cert = certs_dir / "ca.pem"
+    run(f"openssl genrsa -out {ca_key} 2048")
+    run(f"openssl req -new -x509 -days 3650 -key {ca_key} -out {ca_cert} -config {ssl_conf} -extensions v3_ca")
+    print("CA générée.")
+
+    # 5. Générer les certificats pour chaque composant
+    components = {
+        "wazuh-indexer": "wazuh.indexer",
+        "wazuh-manager": "wazuh.manager",
+        "wazuh-dashboard": "wazuh.dashboard"
     }
-    for ancien, nouveau in renommage.items():
-        ancien_path = certs_dir / ancien
-        nouveau_path = certs_dir / nouveau
-        if ancien_path.exists():
-            ancien_path.rename(nouveau_path)
-            print(f"Renommé {ancien} -> {nouveau}")
-        else:
-            print(f"Impossible de renommer {ancien} : fichier introuvable")
+
+    for folder, common_name in components.items():
+        comp_dir = certs_dir / folder
+        key = comp_dir / f"{folder}.key"
+        csr = comp_dir / f"{folder}.csr"
+        cert = comp_dir / f"{folder}.pem"
+
+        # Générer clé et CSR
+        run(f"openssl genrsa -out {key} 2048")
+        run(f"openssl req -new -key {key} -out {csr} -subj '/CN={common_name}'")
+        # Signer avec la CA
+        run(f"openssl x509 -req -days 3650 -in {csr} -CA {ca_cert} -CAkey {ca_key} -out {cert} -extfile {ssl_conf} -extensions v3_req")
+        # Copier le CA cert dans le dossier du composant
+        shutil.copy(ca_cert, comp_dir / "ca.pem")
+        # Renommer la clé pour correspondre au nom attendu par les conteneurs
+        key.rename(comp_dir / f"{folder}-key.pem")
+
+    print("Certificats générés avec succès.")
 
 if __name__ == "__main__":
     main()
