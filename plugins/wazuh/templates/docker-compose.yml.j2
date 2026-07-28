@@ -47,7 +47,8 @@ services:
       - "443:5601"
     volumes:
       - wazuh-dashboard-cert:/usr/share/wazuh-dashboard/certs
-    environment:
+      - ./config/wazuh_dashboard/opensearch_dashboards.yml:/usr/share/wazuh-dashboard/config/opensearch_dashboards.yml
+      environment:
       - "INDEXER_URL=https://wazuh.indexer:9200"
       - "WAZUH_API_URL=https://wazuh.manager:55000"
       - "DASHBOARD_USERNAME=kibanaserver"

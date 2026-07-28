@@ -4,17 +4,6 @@ opensearch.hosts: https://wazuh.indexer:9200
 opensearch.ssl.verificationMode: certificate
 opensearch.username: kibanaserver
 opensearch.password: "kibanaserver"
-opensearch.requestHeadersAllowlist:
-  - authorization
-  - securitytenant
-  - security_tenant
-opensearch_security.multitenancy.enabled: false
-opensearch_security.readonly_mode.roles:
-  - kibana_read_only
 server.ssl.enabled: true
-server.ssl.key: /usr/share/wazuh-dashboard/certs/wazuh-dashboard-key.pem
-server.ssl.certificate: /usr/share/wazuh-dashboard/certs/wazuh-dashboard.pem
-wazuh.monitoring.enabled: true
-wazuh.monitoring.frequency: 300
-wazuh.monitoring.shards: 1
-wazuh.monitoring.replicas: 0
+server.ssl.key: "/usr/share/wazuh-dashboard/certs/wazuh-dashboard-key.pem"
+server.ssl.certificate: "/usr/share/wazuh-dashboard/certs/wazuh-dashboard.pem"
