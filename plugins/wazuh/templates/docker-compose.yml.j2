@@ -10,7 +10,9 @@ services:
     volumes:
       - wazuh-indexer-data:/var/lib/wazuh-indexer
       - ./config/wazuh_indexer/opensearch.yml:/usr/share/wazuh-indexer/opensearch.yml
-      - wazuh-indexer-cert:/usr/share/wazuh-indexer/certs
+      - ./certs/wazuh-indexer/ca.pem:/usr/share/wazuh-indexer/certs/ca.pem
+      - ./certs/wazuh-indexer/wazuh-indexer.pem:/usr/share/wazuh-indexer/certs/wazuh-indexer.pem
+      - ./certs/wazuh-indexer/wazuh-indexer-key.pem:/usr/share/wazuh-indexer/certs/wazuh-indexer-key.pem
     healthcheck:
       test: ["CMD-SHELL", "curl -k -u admin:admin https://localhost:9200"]
       interval: 10s
@@ -30,17 +32,11 @@ services:
       - "1516:1516"
       - "55000:55000"
     volumes:
-      - wazuh-api-configuration:/var/ossec/api/configuration
-      - wazuh-manager-etc:/var/ossec/etc
-      - wazuh-manager-logs:/var/ossec/logs
-      - wazuh-manager-queue:/var/ossec/queue
       - wazuh-manager-data:/var/ossec/data
-      - wazuh-manager-integrations:/var/ossec/integrations
-      - wazuh-manager-active-response:/var/ossec/active-response
-      - wazuh-manager-agentless:/var/ossec/agentless
-      - wazuh-manager-wodles:/var/ossec/wodles
       - ./config/wazuh_cluster/ossec.conf:/var/ossec/etc/ossec.conf
-      - wazuh-manager-cert:/var/ossec/etc/certs
+      - ./certs/wazuh-manager/ca.pem:/var/ossec/etc/certs/ca.pem
+      - ./certs/wazuh-manager/wazuh-manager.pem:/var/ossec/etc/certs/wazuh-manager.pem
+      - ./certs/wazuh-manager/wazuh-manager-key.pem:/var/ossec/etc/certs/wazuh-manager-key.pem
     environment:
       - "WAZUH_ALERTS_INDEX=wazuh-alerts"
 
@@ -57,24 +53,15 @@ services:
       - wazuh-dashboard-config:/usr/share/wazuh-dashboard/config
       - wazuh-dashboard-custom:/usr/share/wazuh-dashboard/custom
       - ./config/wazuh_dashboard/opensearch_dashboards.yml:/usr/share/wazuh-dashboard/config/opensearch_dashboards.yml
-      - wazuh-dashboard-cert:/usr/share/wazuh-dashboard/certs
+      - ./certs/wazuh-dashboard/ca.pem:/usr/share/wazuh-dashboard/certs/ca.pem
+      - ./certs/wazuh-dashboard/wazuh-dashboard.pem:/usr/share/wazuh-dashboard/certs/wazuh-dashboard.pem
+      - ./certs/wazuh-dashboard/wazuh-dashboard-key.pem:/usr/share/wazuh-dashboard/certs/wazuh-dashboard-key.pem
     environment:
       - "DASHBOARD_USERNAME=kibanaserver"
       - "DASHBOARD_PASSWORD={{ admin_password }}"
 
 volumes:
   wazuh-indexer-data:
-  wazuh-indexer-cert:
-  wazuh-api-configuration:
-  wazuh-manager-etc:
-  wazuh-manager-logs:
-  wazuh-manager-queue:
   wazuh-manager-data:
-  wazuh-manager-integrations:
-  wazuh-manager-active-response:
-  wazuh-manager-agentless:
-  wazuh-manager-wodles:
-  wazuh-manager-cert:
   wazuh-dashboard-config:
   wazuh-dashboard-custom:
-  wazuh-dashboard-cert:
