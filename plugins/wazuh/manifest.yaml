@@ -1,12 +1,14 @@
 name: wazuh
 version: "4.14.0"
-description: "Wazuh SIEM (installation rapide officielle)"
+description: "Wazuh SIEM (single-node)"
 modes:
-  auto-install:
-    description: "Déploiement tout-en-un automatisé par le script officiel"
+  single-node:
+    description: "Indexer + Manager + Dashboard"
     prerequisites:
       docker: true
-    templates: []               # pas de template docker-compose
+      ports: [443, 55000, 1514, 1515, 1516]
+    templates:
+      - docker-compose.yml.j2
     post_install:
       healthcheck:
         type: http
