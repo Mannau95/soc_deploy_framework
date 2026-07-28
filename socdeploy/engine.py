@@ -181,6 +181,14 @@ class SOCDeployEngine:
         """Génère les fichiers pour un plugin à partir des templates Jinja2."""
         plugin_dir = self.plugins_dir / plugin_name
         template_dir = plugin_dir / "templates"
+        output_dir = self.deploy_dir / plugin_name
+        output_dir.mkdir(exist_ok=True)
+        manifest = self.manifests[plugin_name]
+        mode_config = manifest.modes[mode]
+        
+        if not mode_config.templates:
+           return output_dir
+    
         if not template_dir.exists():
             raise FileNotFoundError(f"Aucun dossier templates pour {plugin_name}")
 
@@ -291,12 +299,18 @@ class SOCDeployEngine:
                 variables["stack_name"] = self.user_config.stack_name
 
                 logger.info(f"--- Déploiement de {plugin_name} en mode {mode} ---")
-                compose_dir = self.render_templates(plugin_name, mode, variables)
-
-                # Préparation (certificats, configs)
-                self.prepare_plugin(plugin_name, mode, compose_dir, variables)
-
-                self.docker_compose_up(compose_dir)
+                mode_config = self.manifests[plugin_name].modes[mode]
+                if mode_config.templates:
+                    compose_dir = self.render_templates(plugin_name, mode, variables)
+                    self.prepare_plugin(plugin_name, mode, compose_dir, variables)
+                    self.docker_compose_up(compose_dir)
+                else:
+                    # Pas de templates : le script de préparation gère tout (installation rapide, etc.)
+                    output_dir = self.deploy_dir / plugin_name
+                    output_dir.mkdir(parents=True, exist_ok=True)
+                    self.prepare_plugin(plugin_name, mode, output_dir, variables)
+                    # Ne pas appeler docker_compose_up, le script s’en charge
+                    compose_dir = output_dir   # pour la suite (healthcheck, rapport)
 
                 if not self.perform_healthcheck(plugin_name, mode, compose_dir):
                     self.report["success"] = False
