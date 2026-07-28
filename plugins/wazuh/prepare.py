@@ -19,8 +19,8 @@ def main():
     shutil.copytree(config_src, deploy_dir / "config")
     print("Configurations copiées.")
 
-    # 2. Copier le générateur et config.yml
-    for f in ["generate-indexer-certs.yml", "config.yml"]:
+    # 2. Copier le générateur et certs.yml
+    for f in ["generate-indexer-certs.yml", "certs.yml"]:
         src = plugin_dir / f
         if not src.exists():
             print(f"Fichier {f} introuvable.")

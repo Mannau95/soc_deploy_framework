@@ -33,7 +33,7 @@ services:
       - "55000:55000"
     volumes:
       - wazuh-manager-data:/var/ossec/data
-      - ./config/wazuh_cluster/ossec.conf:/var/ossec/etc/ossec.conf
+      - ./config/wazuh_cluster/wazuh_manager.conf:/var/ossec/etc/ossec.conf
       - ./certs/wazuh-manager/ca.pem:/var/ossec/etc/certs/ca.pem
       - ./certs/wazuh-manager/wazuh-manager.pem:/var/ossec/etc/certs/wazuh-manager.pem
       - ./certs/wazuh-manager/wazuh-manager-key.pem:/var/ossec/etc/certs/wazuh-manager-key.pem
