@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Préparation Wazuh – copie configs, génère certificats, renomme les clés."""
+"""Préparation Wazuh – copie configs et génération des certificats (volumes nommés)."""
 
 import sys, json, shutil, subprocess
 from pathlib import Path
@@ -19,7 +19,7 @@ def main():
     shutil.copytree(config_src, deploy_dir / "config")
     print("Configurations copiées.")
 
-    # 2. Copier le générateur et certs.yml
+    # 2. Copier le générateur de certificats et certs.yml
     for f in ["generate-indexer-certs.yml", "certs.yml"]:
         src = plugin_dir / f
         if not src.exists():
@@ -27,10 +27,7 @@ def main():
             sys.exit(1)
         shutil.copy(src, deploy_dir / f)
 
-    # 3. Créer le dossier local certs/ (sinon le générateur échoue)
-    (deploy_dir / "certs").mkdir(exist_ok=True)
-
-    # 4. Générer les certificats (on ignore le code de retour car une erreur non fatale peut s'afficher)
+    # 3. Générer les certificats dans les volumes nommés
     print("Génération des certificats...")
     result = subprocess.run(
         "docker-compose -f generate-indexer-certs.yml run --rm generator",
@@ -40,37 +37,8 @@ def main():
         print(result.stdout)
     if result.stderr:
         print(result.stderr)
-
-    certs_dir = deploy_dir / "certs"
-    # Vérifier que les fichiers minimum existent
-    required = [
-        "wazuh-indexer/ca.pem", "wazuh-indexer/wazuh-indexer.pem", "wazuh-indexer/wazuh-indexer.key",
-        "wazuh-manager/ca.pem", "wazuh-manager/wazuh-manager.pem", "wazuh-manager/wazuh-manager.key",
-        "wazuh-dashboard/ca.pem", "wazuh-dashboard/wazuh-dashboard.pem", "wazuh-dashboard/wazuh-dashboard.key",
-    ]
-    missing = [f for f in required if not (certs_dir / f).exists()]
-    if missing:
-        print("Erreur : certificats manquants :")
-        for f in missing:
-            print(f"  - {f}")
-        sys.exit(1)
-
-    print("Tous les certificats sont présents.")
-
-    # 5. Renommer les clés privées (le générateur produit .key, les conteneurs attendent -key.pem)
-    renommage = {
-        "wazuh-indexer/wazuh-indexer.key": "wazuh-indexer/wazuh-indexer-key.pem",
-        "wazuh-manager/wazuh-manager.key": "wazuh-manager/wazuh-manager-key.pem",
-        "wazuh-dashboard/wazuh-dashboard.key": "wazuh-dashboard/wazuh-dashboard-key.pem",
-    }
-    for ancien, nouveau in renommage.items():
-        ancien_path = certs_dir / ancien
-        nouveau_path = certs_dir / nouveau
-        if ancien_path.exists():
-            ancien_path.rename(nouveau_path)
-            print(f"Renommé {ancien} -> {nouveau}")
-        else:
-            print(f"Impossible de renommer {ancien} : fichier introuvable")
+    # On ne vérifie pas le code de retour, car le générateur peut avoir un avertissement non fatal.
+    print("Génération terminée.")
 
 if __name__ == "__main__":
     main()

@@ -6,5 +6,12 @@ services:
     hostname: wazuh-certs-generator
     volumes:
       - ./certs.yml:/config/certs.yml
-      - ./certs/:/etc/wazuh-certs-generator/certs/
+      - wazuh-indexer-cert:/etc/wazuh-certs-generator/certs/indexer
+      - wazuh-manager-cert:/etc/wazuh-certs-generator/certs/manager
+      - wazuh-dashboard-cert:/etc/wazuh-certs-generator/certs/dashboard
     command: /etc/wazuh-certs-generator/certs/ /etc/wazuh-certs-generator/config.yml
+
+volumes:
+  wazuh-indexer-cert:
+  wazuh-manager-cert:
+  wazuh-dashboard-cert:
