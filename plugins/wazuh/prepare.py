@@ -1,19 +1,8 @@
 #!/usr/bin/env python3
-"""Préparation Wazuh – copie configs, génère certificats, vérifie leur existence."""
+"""Préparation Wazuh – copie configs, génère certificats, renomme les clés."""
 
 import sys, json, shutil, subprocess
 from pathlib import Path
-
-def run_generator(cmd, cwd=None):
-    # On exécute sans check=True pour ne pas bloquer sur des avertissements non fatals
-    result = subprocess.run(cmd, shell=True, cwd=cwd, capture_output=True, text=True)
-    # On affiche quand même stdout/stderr pour le diagnostic
-    if result.stdout:
-        print(result.stdout)
-    if result.stderr:
-        print(result.stderr)
-    # On retourne le code de retour (0 = succès, autre = échec)
-    return result.returncode
 
 def main():
     deploy_dir = Path(sys.argv[1])
@@ -31,41 +20,41 @@ def main():
     print("Configurations copiées.")
 
     # 2. Copier le générateur de certificats et config.yml
-    for f in ["generate-indexer-certs.yml", "certs.yml"]:
+    for f in ["generate-indexer-certs.yml", "config.yml"]:
         src = plugin_dir / f
         if not src.exists():
             print(f"Fichier {f} introuvable.")
             sys.exit(1)
         shutil.copy(src, deploy_dir / f)
 
-    # 3. Générer les certificats dans le dossier ./certs/
+    # 3. Générer les certificats – on ignore le code de retour (erreur non fatale connue)
     print("Génération des certificats...")
-    ret = run_generator("docker-compose -f generate-indexer-certs.yml run --rm generator", cwd=str(deploy_dir))
-    # On ne quitte pas sur erreur, on vérifie plutôt la présence des fichiers
+    result = subprocess.run(
+        "docker-compose -f generate-indexer-certs.yml run --rm generator",
+        shell=True, cwd=str(deploy_dir), capture_output=True, text=True
+    )
+    if result.stdout:
+        print(result.stdout)
+    if result.stderr:
+        print(result.stderr)
+
     certs_dir = deploy_dir / "certs"
-    # Liste des fichiers minimum attendus
-    required_files = [
-        "wazuh-indexer/ca.pem",
-        "wazuh-indexer/wazuh-indexer.pem",
-        "wazuh-indexer/wazuh-indexer.key",
-        "wazuh-manager/ca.pem",
-        "wazuh-manager/wazuh-manager.pem",
-        "wazuh-manager/wazuh-manager.key",
-        "wazuh-dashboard/ca.pem",
-        "wazuh-dashboard/wazuh-dashboard.pem",
-        "wazuh-dashboard/wazuh-dashboard.key",
+    # Vérifier la présence des fichiers minimum
+    required = [
+        "wazuh-indexer/ca.pem", "wazuh-indexer/wazuh-indexer.pem", "wazuh-indexer/wazuh-indexer.key",
+        "wazuh-manager/ca.pem", "wazuh-manager/wazuh-manager.pem", "wazuh-manager/wazuh-manager.key",
+        "wazuh-dashboard/ca.pem", "wazuh-dashboard/wazuh-dashboard.pem", "wazuh-dashboard/wazuh-dashboard.key",
     ]
-    missing = [f for f in required_files if not (certs_dir / f).exists()]
+    missing = [f for f in required if not (certs_dir / f).exists()]
     if missing:
-        print("Erreur : les certificats suivants sont manquants :")
+        print("Erreur : certificats manquants :")
         for f in missing:
             print(f"  - {f}")
-        print("Code de retour du générateur :", ret)
         sys.exit(1)
 
-    print("Tous les certificats attendus sont présents.")
+    print("Tous les certificats sont présents.")
 
-    # 4. Renommer les clés privées (le générateur produit .key, les conteneurs attendent -key.pem)
+    # 4. Renommer les clés privées (.key -> -key.pem)
     renommage = {
         "wazuh-indexer/wazuh-indexer.key": "wazuh-indexer/wazuh-indexer-key.pem",
         "wazuh-manager/wazuh-manager.key": "wazuh-manager/wazuh-manager-key.pem",
