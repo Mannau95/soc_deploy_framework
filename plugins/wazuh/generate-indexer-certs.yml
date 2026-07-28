@@ -5,6 +5,6 @@ services:
     image: wazuh/wazuh-certs-generator:0.0.1
     hostname: wazuh-certs-generator
     volumes:
-      - ./config.yml:/etc/wazuh-certs-generator/config.yml
+      - ./certs.yml:/etc/wazuh-certs-generator/certs.yml
       - ./certs/:/etc/wazuh-certs-generator/certs/
-    command: /etc/wazuh-certs-generator/certs/ /etc/wazuh-certs-generator/config.yml
+    command: /etc/wazuh-certs-generator/certs/ /etc/wazuh-certs-generator/certs.yml

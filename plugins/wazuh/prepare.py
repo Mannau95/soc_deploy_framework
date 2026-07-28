@@ -31,7 +31,7 @@ def main():
     print("Configurations copiées.")
 
     # 2. Copier le générateur de certificats et config.yml
-    for f in ["generate-indexer-certs.yml", "config.yml"]:
+    for f in ["generate-indexer-certs.yml", "certs.yml"]:
         src = plugin_dir / f
         if not src.exists():
             print(f"Fichier {f} introuvable.")
