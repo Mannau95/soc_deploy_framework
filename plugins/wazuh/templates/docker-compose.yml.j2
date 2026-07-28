@@ -46,11 +46,10 @@ services:
     ports:
       - "443:5601"
     volumes:
-      - wazuh-dashboard-config:/usr/share/wazuh-dashboard/config
-      - wazuh-dashboard-custom:/usr/share/wazuh-dashboard/custom
-      - ./config/wazuh_dashboard/opensearch_dashboards.yml:/usr/share/wazuh-dashboard/config/opensearch_dashboards.yml
       - wazuh-dashboard-cert:/usr/share/wazuh-dashboard/certs
     environment:
+      - "INDEXER_URL=https://wazuh.indexer:9200"
+      - "WAZUH_API_URL=https://wazuh.manager:55000"
       - "DASHBOARD_USERNAME=kibanaserver"
       - "DASHBOARD_PASSWORD={{ admin_password }}"
 
@@ -59,6 +58,4 @@ volumes:
   wazuh-indexer-cert:
   wazuh-manager-data:
   wazuh-manager-cert:
-  wazuh-dashboard-config:
-  wazuh-dashboard-custom:
   wazuh-dashboard-cert:

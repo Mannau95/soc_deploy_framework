@@ -11,8 +11,9 @@ modes:
       - docker-compose.yml.j2
     post_install:
       healthcheck:
-        type: command
-        command: "docker exec $(docker ps -qf 'name=wazuh.dashboard') curl -f -k https://localhost:5601"
+        type: http
+        url: "https://localhost"
+        expected_status: 200
         timeout: 30
-        retries: 30
-        interval: 10
+        retries: 40
+        interval: 15
