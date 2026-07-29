@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Préparation Wazuh – copie configs et génération des certificats avec openssl."""
 
-import sys, json, shutil, subprocess
+import sys, json, shutil, subprocess, os
 from pathlib import Path
 
 def run(cmd, cwd=None):
@@ -94,6 +94,12 @@ IP.1 = 127.0.0.1
         # Renommer la clé pour correspondre au nom attendu par les conteneurs
         key.rename(comp_dir / f"{folder}-key.pem")
 
+    # 6. Ajuster les permissions pour que les conteneurs puissent lire les certificats
+    for folder in ["wazuh-indexer", "wazuh-manager", "wazuh-dashboard"]:
+        comp_dir = certs_dir / folder
+        for f in comp_dir.iterdir():
+            os.chmod(f, 0o644)
+    print("Permissions ajustées.")
     print("Certificats générés avec succès.")
 
 if __name__ == "__main__":
