@@ -89,8 +89,8 @@ IP.1 = 127.0.0.1
         run(f"openssl genrsa -out {key} 2048")
         run(f"openssl req -new -key {key} -out {csr} -subj '/CN={common_name}'")
         run(f"openssl x509 -req -days 3650 -in {csr} -CA {ca_cert} -CAkey {ca_key} -out {cert} -extfile {ssl_conf} -extensions v3_req")
-        # Copier le CA cert dans le dossier du composant
-        shutil.copy(ca_cert, comp_dir / "ca.pem")
+        # Copier le CA cert en tant que root-ca.pem (nom attendu par le dashboard officiel)
+        shutil.copy(ca_cert, comp_dir / "root-ca.pem")
         # Renommer la clé pour correspondre au nom attendu par les conteneurs
         key.rename(comp_dir / f"{folder}-key.pem")
 
