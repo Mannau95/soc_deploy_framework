@@ -23,7 +23,7 @@ import yaml
 import docker
 from docker.errors import DockerException
 from jinja2 import Environment, FileSystemLoader, TemplateNotFound
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel, ValidationError, validator
 import requests
 import socket
 from loguru import logger
@@ -34,7 +34,7 @@ from loguru import logger
 
 class HealthcheckConfig(BaseModel):
     """Configuration d'un healthcheck dans un manifeste."""
-    type: str
+    type: str  # "http" ou "command"
     url: Optional[str] = None
     command: Optional[str] = None
     expected_status: Optional[int] = None
@@ -46,7 +46,7 @@ class HealthcheckConfig(BaseModel):
 class ModeConfig(BaseModel):
     """Un mode d'installation pour un outil."""
     description: str
-    prerequisites: Dict[str, Any]
+    prerequisites: Dict[str, Any]  # docker: bool, ports: [int]
     templates: List[str]
     post_install: Optional[Dict[str, HealthcheckConfig]] = None
 
@@ -84,6 +84,7 @@ class SOCDeployEngine:
         self.report: Dict[str, Any] = {"success": True, "services": []}
         self.docker_client = None
 
+        # Configuration du logger
         logger.remove()
         logger.add(sys.stderr, level="INFO", format="<green>{time}</green> | <level>{message}</level>")
 
@@ -182,22 +183,19 @@ class SOCDeployEngine:
         plugin_dir = self.plugins_dir / plugin_name
         template_dir = plugin_dir / "templates"
         output_dir = self.deploy_dir / plugin_name
-        output_dir.mkdir(exist_ok=True)
+        output_dir.mkdir(parents=True, exist_ok=True)
+
         manifest = self.manifests[plugin_name]
         mode_config = manifest.modes[mode]
-        
+
         if not mode_config.templates:
-           return output_dir
-    
+            return output_dir
+
         if not template_dir.exists():
             raise FileNotFoundError(f"Aucun dossier templates pour {plugin_name}")
 
         env = Environment(loader=FileSystemLoader(str(template_dir)))
-        output_dir = self.deploy_dir / plugin_name
-        output_dir.mkdir(exist_ok=True)
 
-        manifest = self.manifests[plugin_name]
-        mode_config = manifest.modes[mode]
         for template_name in mode_config.templates:
             try:
                 template = env.get_template(template_name)
@@ -231,7 +229,7 @@ class SOCDeployEngine:
 
         logger.info(f"Exécution du script de préparation pour {plugin_name}")
         try:
-            result: subprocess.CompletedProcess = subprocess.run(
+            result = subprocess.run(
                 [sys.executable, str(prepare_script), str(output_dir), json.dumps(variables)],
                 check=True,
                 capture_output=True,
@@ -248,7 +246,7 @@ class SOCDeployEngine:
 
     def docker_compose_up(self, compose_dir: Path) -> None:
         """Lance `docker compose up -d` ou `docker-compose up -d`."""
-        # Détecte quelle commande est disponible
+        # Détecter la commande disponible
         compose_cmd = None
         try:
             subprocess.run(
@@ -264,7 +262,7 @@ class SOCDeployEngine:
                 )
                 compose_cmd = ["docker-compose"]
             except (subprocess.CalledProcessError, FileNotFoundError):
-                raise RuntimeError("Ni 'docker compose' ni 'docker-compose' n'ont été trouvés. Installe Docker Compose.")
+                raise RuntimeError("Ni 'docker compose' ni 'docker-compose' n'ont été trouvés. Installez Docker Compose.")
 
         logger.info(f"Lancement de {compose_cmd} dans {compose_dir}")
         try:
@@ -279,6 +277,107 @@ class SOCDeployEngine:
         except subprocess.CalledProcessError as e:
             logger.error(f"Erreur Docker Compose : {e.stderr.decode()}")
             raise
+
+    # -----------------------------------------------------------------------
+    # Healthchecks
+    # -----------------------------------------------------------------------
+
+    def perform_healthcheck(self, plugin_name: str, mode: str, output_dir: Path) -> bool:
+        """Exécute le healthcheck défini dans le manifeste du plugin."""
+        manifest = self.manifests[plugin_name]
+        mode_config = manifest.modes[mode]
+        post = mode_config.post_install
+        if not post or "healthcheck" not in post:
+            logger.info(f"Pas de healthcheck pour {plugin_name}")
+            return True
+
+        hc = post["healthcheck"]
+        logger.info(f"Healthcheck pour {plugin_name}: type={hc.type}")
+        if hc.type == "http":
+            return self._http_healthcheck(hc)
+        elif hc.type == "command":
+            return self._command_healthcheck(hc, output_dir)
+        else:
+            logger.error(f"Type de healthcheck inconnu: {hc.type}")
+            return False
+
+    def _http_healthcheck(self, hc: HealthcheckConfig) -> bool:
+        """Healthcheck par appel HTTP."""
+        url = hc.url
+        expected = hc.expected_status
+        for i in range(hc.retries):
+            try:
+                resp = requests.get(url, timeout=hc.timeout, verify=False)
+                if resp.status_code == expected:
+                    logger.info(f"Healthcheck HTTP OK ({url})")
+                    return True
+            except requests.RequestException:
+                pass
+            logger.info(f"Tentative {i+1}/{hc.retries} échouée, attente {hc.interval}s")
+            time.sleep(hc.interval)
+        logger.error(f"Healthcheck HTTP échoué pour {url}")
+        return False
+
+    def _command_healthcheck(self, hc: HealthcheckConfig, cwd: Path) -> bool:
+        """Healthcheck par exécution d'une commande shell."""
+        for i in range(hc.retries):
+            try:
+                result = subprocess.run(
+                    hc.command, shell=True, cwd=str(cwd),
+                    capture_output=True, text=True, timeout=hc.timeout
+                )
+                if hc.expected_stdout and hc.expected_stdout in result.stdout:
+                    logger.info("Healthcheck commande OK")
+                    return True
+                elif result.returncode == 0:
+                    logger.info("Healthcheck commande OK (code 0)")
+                    return True
+            except subprocess.TimeoutExpired:
+                pass
+            time.sleep(hc.interval)
+        logger.error("Healthcheck commande échoué")
+        return False
+
+    # -----------------------------------------------------------------------
+    # Rapport
+    # -----------------------------------------------------------------------
+
+    def collect_service_info(self, plugin_name: str, mode: str) -> Dict[str, Any]:
+        """Collecte les informations sur le service déployé pour le rapport."""
+        manifest = self.manifests[plugin_name]
+        mode_config = manifest.modes[mode]
+        info = {
+            "plugin": plugin_name,
+            "version": manifest.version,
+            "mode": mode,
+            "description": manifest.description,
+            "urls": [],
+            "credentials": {}
+        }
+        pre = mode_config.prerequisites
+        ports = pre.get("ports", [])
+        if ports:
+            info["urls"].append(f"localhost:{ports[0]}")
+        return info
+
+    def generate_report(self) -> str:
+        """Génère le rapport markdown et l'écrit dans le répertoire de déploiement."""
+        template_path = Path("templates") / "report.md.j2"
+        if template_path.exists():
+            env = Environment(loader=FileSystemLoader("templates"))
+            template = env.get_template("report.md.j2")
+            content = template.render(report=self.report, config=self.user_config)
+        else:
+            content = f"# Rapport de déploiement {self.user_config.stack_name}\n\n"
+            for svc in self.report["services"]:
+                content += f"- **{svc['plugin']}** ({svc['mode']}) : {svc['description']}\n"
+                content += f"  URLs: {', '.join(svc.get('urls', []))}\n"
+
+        report_path = self.deploy_dir / "report.md"
+        with open(report_path, 'w') as f:
+            f.write(content)
+        logger.info(f"Rapport enregistré : {report_path}")
+        return str(report_path)
 
     # -----------------------------------------------------------------------
     # Orchestration principale
@@ -298,24 +397,33 @@ class SOCDeployEngine:
                 variables = tool.variables
                 variables["stack_name"] = self.user_config.stack_name
 
+                manifest = self.manifests[plugin_name]
+                mode_config = manifest.modes[mode]
+
                 logger.info(f"--- Déploiement de {plugin_name} en mode {mode} ---")
-                mode_config = self.manifests[plugin_name].modes[mode]
+
+                # Rendu des templates (si existants)
                 if mode_config.templates:
                     compose_dir = self.render_templates(plugin_name, mode, variables)
-                    self.prepare_plugin(plugin_name, mode, compose_dir, variables)
-                    self.docker_compose_up(compose_dir)
                 else:
-                    # Pas de templates : le script de préparation gère tout (installation rapide, etc.)
+                    # Mode sans template (ex: script officiel)
                     output_dir = self.deploy_dir / plugin_name
                     output_dir.mkdir(parents=True, exist_ok=True)
-                    self.prepare_plugin(plugin_name, mode, output_dir, variables)
-                    # Ne pas appeler docker_compose_up, le script s’en charge
-                    compose_dir = output_dir   # pour la suite (healthcheck, rapport)
+                    compose_dir = output_dir
 
+                # Exécution du script de préparation
+                self.prepare_plugin(plugin_name, mode, compose_dir, variables)
+
+                # Lancement Docker Compose seulement si un template a été rendu
+                if mode_config.templates:
+                    self.docker_compose_up(compose_dir)
+
+                # Healthcheck
                 if not self.perform_healthcheck(plugin_name, mode, compose_dir):
                     self.report["success"] = False
                     raise RuntimeError(f"Healthcheck échoué pour {plugin_name}")
 
+                # Collecte d'infos pour le rapport
                 service_info = self.collect_service_info(plugin_name, mode)
                 service_info["status"] = "running"
                 self.report["services"].append(service_info)
@@ -328,70 +436,14 @@ class SOCDeployEngine:
             logger.error(f"Échec du déploiement : {e}")
             self.report["success"] = False
             self.report["error"] = str(e)
+            # Rollback basique
             if self.deploy_dir and self.deploy_dir.exists():
                 logger.warning(f"Rollback : suppression de {self.deploy_dir}")
                 shutil.rmtree(self.deploy_dir, ignore_errors=True)
+            # Tenter de générer un rapport d'erreur malgré tout
             try:
                 if self.deploy_dir:
                     self.generate_report()
             except:
                 pass
             raise
-    
-    def perform_healthcheck(self, plugin_name: str, mode: str, output_dir: Path) -> bool:
-        """Exécute le healthcheck défini dans le manifeste du plugin."""
-        manifest = self.manifests[plugin_name]
-        mode_config = manifest.modes[mode]
-        post = mode_config.post_install
-        if not post or "healthcheck" not in post:
-            logger.info(f"Pas de healthcheck pour {plugin_name}")
-            return True
-
-        hc = post["healthcheck"]
-        logger.info(f"Healthcheck pour {plugin_name}: type={hc.type}")
-        if hc.type == "http":
-            return self._http_healthcheck(hc)
-        elif hc.type == "command":
-            return self._command_healthcheck(hc, output_dir)
-        else:
-            logger.error(f"Type de healthcheck inconnu: {hc.type}")
-            return False
-        
-    def _http_healthcheck(self, hc: HealthcheckConfig) -> bool:
-        """Healthcheck par appel HTTP."""
-        import requests
-        import time
-        for i in range(hc.retries):
-            try:
-                resp = requests.get(hc.url, timeout=hc.timeout, verify=False)
-                if resp.status_code == hc.expected_status:
-                    logger.info(f"Healthcheck HTTP OK ({hc.url})")
-                    return True
-            except requests.RequestException:
-                pass
-            logger.info(f"Tentative {i+1}/{hc.retries} échouée, attente {hc.interval}s")
-            time.sleep(hc.interval)
-        logger.error(f"Healthcheck HTTP échoué pour {hc.url}")
-        return False
-
-    def _command_healthcheck(self, hc: HealthcheckConfig, cwd: Path) -> bool:
-        """Healthcheck par exécution d'une commande shell."""
-        import subprocess
-        import time
-        for i in range(hc.retries):
-            try:
-                result = subprocess.run(
-                    hc.command, shell=True, cwd=str(cwd),
-                    capture_output=True, text=True, timeout=hc.timeout
-                )
-                if hc.expected_stdout and hc.expected_stdout in result.stdout:
-                    logger.info("Healthcheck commande OK")
-                    return True
-                elif result.returncode == 0:
-                    logger.info("Healthcheck commande OK (code 0)")
-                    return True
-            except subprocess.TimeoutExpired:
-                pass
-            time.sleep(hc.interval)
-        logger.error("Healthcheck commande échoué")
-        return False
