@@ -5,6 +5,7 @@ from pathlib import Path
 
 def main():
     deploy_dir = Path(sys.argv[1])
+    deploy_dir.mkdir(parents=True, exist_ok=True)
     variables = json.loads(sys.argv[2])
     admin_password = variables.get("admin_password", "Admin123!")
 
