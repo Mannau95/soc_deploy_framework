@@ -1,0 +1,12 @@
+version: '3.7'
+
+services:
+  suricata:
+    image: suri/suricata:latest
+    container_name: suricata
+    restart: always
+    network_mode: "host"
+    volumes:
+      - ./logs:/var/log/suricata
+    command: >
+      suricata -i {{ interface }} -c /etc/suricata/suricata.yaml --af-packet

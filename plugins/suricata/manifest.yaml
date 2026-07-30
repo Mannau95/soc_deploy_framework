@@ -1,0 +1,17 @@
+name: suricata
+version: "7.0"
+description: "Suricata IDS/IPS"
+modes:
+  ids:
+    description: "Suricata en mode IDS (détection passive)"
+    prerequisites:
+      docker: true
+    templates:
+      - docker-compose.yml.j2
+    post_install:
+      healthcheck:
+        type: command
+        command: "docker exec suricata suricata --build-info"
+        timeout: 10
+        retries: 5
+        interval: 5

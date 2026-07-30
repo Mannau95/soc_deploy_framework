@@ -4,3 +4,7 @@ tools:
     mode: auto-install
     variables:
       admin_password: "MyS3cur3P@ss!"
+  - plugin: suricata
+    mode: ids
+    variables:
+      interface: "eth0"   # à adapter selon l'interface réseau du serveur
