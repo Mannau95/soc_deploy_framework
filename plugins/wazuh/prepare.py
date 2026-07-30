@@ -16,7 +16,7 @@ def main():
 
     print("Lancement de l'installation rapide Wazuh...")
     result = subprocess.run(
-        ["bash", str(install_script), "--all-in-one"],
+        ["sudo", "bash", str(install_script), "--all-in-one"],
         cwd=str(deploy_dir),
         capture_output=True,
         text=True,
