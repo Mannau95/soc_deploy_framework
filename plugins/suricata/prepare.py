@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Préparation Suricata – création du dossier de logs et mise à jour optionnelle des règles."""
 
+import shutil
 import sys, json, os, subprocess
 from pathlib import Path
 
@@ -24,6 +25,13 @@ def main():
         print("Règles mises à jour.")
     else:
         print("Mise à jour des règles ignorée (auto_rules=false).")
-
+    # Copier la configuration Suricata
+    config_src = Path(__file__).resolve().parent / "config"
+    if config_src.exists():
+        dest = deploy_dir / "config"
+        if dest.exists():
+            shutil.rmtree(dest)
+        shutil.copytree(config_src, dest)
+        print("Configuration Suricata copiée.")
 if __name__ == "__main__":
     main()

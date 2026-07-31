@@ -1,0 +1,22 @@
+%YAML 1.1
+---
+
+default-log-dir: /var/log/suricata
+
+outputs:
+  - fast:
+      enabled: yes
+      filename: fast.log
+  - eve-log:
+      enabled: yes
+      filename: eve.json
+      types:
+        - alert
+        - http
+        - dns
+        - tls
+        - ssh
+        - smtp
+        - flow
+        - netflow
+        - metadata
