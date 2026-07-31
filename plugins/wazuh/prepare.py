@@ -34,8 +34,15 @@ def main():
         print(result.stderr)
     if result.returncode != 0:
         print("Erreur lors de l'installation.")
-        sys.exit(1)
+        sys.exit(1) 
+        # Restaurer la propriété du dossier de déploiement pour l'utilisateur courant
+    import os, pwd
+    uid = os.getuid()
+    gid = os.getgid()
+    user = pwd.getpwuid(uid).pw_name
+    subprocess.run(["sudo", "chown", "-R", f"{user}:{user}", str(deploy_dir.parent)])
+    print(f"Propriété du dossier de déploiement restaurée pour {user}.")
     print("Installation terminée avec succès.")
 
 if __name__ == "__main__":
-    main()
+    main() 
