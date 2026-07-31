@@ -10,4 +10,4 @@ services:
       - ./logs:/var/log/suricata
       - ./config/suricata.yaml:/etc/suricata/suricata.yaml:ro
     command: >
-      suricata -i {{ interface | auto_interface }} -c /etc/suricata/suricata.yaml --af-packet
+      sh -c "{% if auto_rules %}suricata-update && {% endif %}suricata -i {{ interface | auto_interface }} -c /etc/suricata/suricata.yaml --af-packet"

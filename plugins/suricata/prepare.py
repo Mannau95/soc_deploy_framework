@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Préparation Suricata – création du dossier de logs, copie de la config, mise à jour optionnelle des règles."""
+"""Préparation Suricata – création des dossiers et copie de la config."""
 
-import sys, json, os, shutil, subprocess
+import sys, json, os, shutil
 from pathlib import Path
 
 def main():
@@ -22,17 +22,6 @@ def main():
     log_dir.mkdir(parents=True, exist_ok=True)
     os.chmod(log_dir, 0o777)
     print("Dossier de logs créé.")
-
-    # 3. Mettre à jour les règles si demandé
-    if variables.get("auto_rules", False):
-        print("Mise à jour des règles Suricata...")
-        subprocess.run(
-            ["docker", "exec", "suricata", "suricata-update"],
-            check=False
-        )
-        print("Règles mises à jour.")
-    else:
-        print("Mise à jour des règles ignorée (auto_rules=false).")
 
 if __name__ == "__main__":
     main()
