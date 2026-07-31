@@ -9,4 +9,4 @@ services:
     volumes:
       - ./logs:/var/log/suricata
     command: >
-      suricata -i {{ interface }} -c /etc/suricata/suricata.yaml --af-packet
+      suricata -i {{ interface | default('eth0') }} -c /etc/suricata/suricata.yaml --af-packet
