@@ -432,6 +432,7 @@ class SOCDeployEngine:
                 plugin_name = tool.plugin
                 mode = tool.mode
                 variables = tool.variables
+                variables["mode"] = mode   
                 variables["stack_name"] = self.user_config.stack_name
 
                 manifest = self.manifests[plugin_name]
