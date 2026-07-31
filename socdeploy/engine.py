@@ -195,6 +195,23 @@ class SOCDeployEngine:
             raise FileNotFoundError(f"Aucun dossier templates pour {plugin_name}")
 
         env = Environment(loader=FileSystemLoader(str(template_dir)))
+    
+    # Fonction de détection de l'interface réseau par défaut
+        def get_default_interface():
+            import subprocess
+            try:
+                res = subprocess.run(
+                   "ip route show default | awk '{print $5}'",
+                    shell=True, capture_output=True, text=True
+                )
+                iface = res.stdout.strip()
+                if iface:
+                    return iface
+            except:
+                  pass
+            return "eth0"
+        env.filters['auto_interface'] = lambda iface: iface if iface else get_default_interface()
+
 
         for template_name in mode_config.templates:
             try:
@@ -209,7 +226,7 @@ class SOCDeployEngine:
                 logger.error(f"Template introuvable : {template_name}")
                 raise
         return output_dir
-
+    
     # -----------------------------------------------------------------------
     # Préparation du plugin (certificats, configs statiques)
     # -----------------------------------------------------------------------

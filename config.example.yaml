@@ -7,4 +7,4 @@ tools:
   - plugin: suricata
     mode: ids
     variables:
-      interface: "eth0"   # à adapter selon l'interface réseau du serveur
+      interface: ""   # à adapter selon l'interface réseau du serveur
