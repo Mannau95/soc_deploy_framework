@@ -21,23 +21,24 @@ def main():
     deploy_dir = Path(sys.argv[1])
     variables = json.loads(sys.argv[2])
 
-    # 1. Détection de l'interface (priorité à la variable utilisateur, sinon auto)
-    interface = variables.get("interface") or get_default_interface()
-    print(f"Interface utilisée : {interface}")
-
-    # 2. Créer le dossier de logs
+    # 1. Créer le dossier de logs
     log_dir = deploy_dir / "logs"
     log_dir.mkdir(parents=True, exist_ok=True)
     os.chmod(log_dir, 0o777)
     print("Dossier de logs créé.")
 
-    # 3. Remplacer l'interface dans le docker-compose.yml déjà généré
+    # 2. Déterminer l'interface à utiliser
+    interface = variables.get("interface") or get_default_interface()
+    print(f"Interface utilisée : {interface}")
+
+    # 3. Mettre à jour le docker-compose.yml (remplacer eth0 par l'interface réelle)
     compose_file = deploy_dir / "docker-compose.yml"
     if compose_file.exists():
         content = compose_file.read_text()
-        content = content.replace("{{ interface }}", interface)
+        # Remplacer la ligne de commande : suricata -i eth0 ... -> suricata -i <interface> ...
+        content = content.replace("-i eth0", f"-i {interface}")
         compose_file.write_text(content)
-        print(f"Interface mise à jour dans {compose_file}")
+        print(f"Commande mise à jour avec l'interface {interface}")
     else:
         print("Fichier docker-compose.yml introuvable.")
 
