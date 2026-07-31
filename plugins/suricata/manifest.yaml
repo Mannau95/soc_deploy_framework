@@ -15,3 +15,16 @@ modes:
         timeout: 10
         retries: 5
         interval: 5
+  ips:
+    description: "Suricata en mode IPS (prévention active)"
+    prerequisites:
+      docker: true
+    templates:
+      - docker-compose.yml.j2
+    post_install:
+      healthcheck:
+        type: command
+        command: "docker exec suricata suricata --build-info"
+        timeout: 10
+        retries: 5
+        interval: 5

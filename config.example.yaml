@@ -5,7 +5,7 @@ tools:
     variables:
       admin_password: "MyS3cur3P@ss!"
   - plugin: suricata
-    mode: ids
+    mode: ips
     variables:
       interface: ""
-      auto_rules: true
+      auto_rules: false

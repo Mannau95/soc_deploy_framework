@@ -6,8 +6,15 @@ services:
     container_name: suricata
     restart: always
     network_mode: "host"
+    cap_add:
+      - NET_ADMIN
+      - SYS_NICE
     volumes:
       - ./logs:/var/log/suricata
       - ./config/suricata.yaml:/etc/suricata/suricata.yaml:ro
     command: >
+      {% if mode == "ips" %}
+      suricata -i {{ interface | auto_interface }} -c /etc/suricata/suricata.yaml -q 0
+      {% else %}
       suricata -i {{ interface | auto_interface }} -c /etc/suricata/suricata.yaml --af-packet
+      {% endif %}
