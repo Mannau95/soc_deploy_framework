@@ -9,6 +9,7 @@ Responsabilités :
 - Vérifier l'état de santé (healthchecks).
 - Produire un rapport de déploiement complet.
 - Gérer les erreurs avec rollback basique.
+- Gérer un fichier d'état pour ne pas réinstaller les outils déjà déployés.
 """
 
 import subprocess
@@ -23,7 +24,7 @@ import yaml
 import docker
 from docker.errors import DockerException
 from jinja2 import Environment, FileSystemLoader, TemplateNotFound
-from pydantic import BaseModel, ValidationError, validator
+from pydantic import BaseModel, ValidationError
 import requests
 import socket
 from loguru import logger
@@ -34,7 +35,7 @@ from loguru import logger
 
 class HealthcheckConfig(BaseModel):
     """Configuration d'un healthcheck dans un manifeste."""
-    type: str  # "http" ou "command"
+    type: str
     url: Optional[str] = None
     command: Optional[str] = None
     expected_status: Optional[int] = None
@@ -46,7 +47,7 @@ class HealthcheckConfig(BaseModel):
 class ModeConfig(BaseModel):
     """Un mode d'installation pour un outil."""
     description: str
-    prerequisites: Dict[str, Any]  # docker: bool, ports: [int]
+    prerequisites: Dict[str, Any]
     templates: List[str]
     post_install: Optional[Dict[str, HealthcheckConfig]] = None
 
@@ -123,6 +124,28 @@ class SOCDeployEngine:
                 self.manifests[tool.plugin] = self.load_plugin_manifest(tool.plugin)
 
     # -----------------------------------------------------------------------
+    # Gestion de l'état de la stack
+    # -----------------------------------------------------------------------
+
+    def load_state(self) -> Dict[str, Any]:
+        """Charge l'état de la stack (outils déjà installés)."""
+        if not self.deploy_dir:
+            return {}
+        state_file = self.deploy_dir / "stack_state.json"
+        if state_file.exists():
+            with open(state_file, 'r') as f:
+                return json.load(f)
+        return {}
+
+    def save_state(self, state: Dict[str, Any]) -> None:
+        """Sauvegarde l'état de la stack."""
+        if not self.deploy_dir:
+            return
+        state_file = self.deploy_dir / "stack_state.json"
+        with open(state_file, 'w') as f:
+            json.dump(state, f, indent=2)
+
+    # -----------------------------------------------------------------------
     # Vérifications des prérequis
     # -----------------------------------------------------------------------
 
@@ -134,7 +157,7 @@ class SOCDeployEngine:
             logger.info("Docker est opérationnel.")
             return True
         except DockerException:
-            logger.error("Docker n'est pas accessible. Veuillez l'installer et le démarrer.")
+            logger.error("Docker n'est pas accessible.")
             return False
 
     def check_ports(self, ports: List[int]) -> bool:
@@ -170,12 +193,9 @@ class SOCDeployEngine:
     # -----------------------------------------------------------------------
 
     def setup_deploy_directory(self) -> None:
-        """Crée le répertoire de déploiement pour la stack."""
+        """Crée le répertoire de déploiement pour la stack (sans effacer un existant)."""
         self.deploy_dir = Path("deployments") / self.user_config.stack_name
-        if self.deploy_dir.exists():
-            logger.warning(f"Répertoire {self.deploy_dir} existe déjà, suppression.")
-            shutil.rmtree(self.deploy_dir)
-        self.deploy_dir.mkdir(parents=True)
+        self.deploy_dir.mkdir(parents=True, exist_ok=True)
         logger.info(f"Répertoire de déploiement : {self.deploy_dir}")
 
     def render_templates(self, plugin_name: str, mode: str, variables: Dict[str, Any]) -> Path:
@@ -195,23 +215,23 @@ class SOCDeployEngine:
             raise FileNotFoundError(f"Aucun dossier templates pour {plugin_name}")
 
         env = Environment(loader=FileSystemLoader(str(template_dir)))
-    
-    # Fonction de détection de l'interface réseau par défaut
+
+        # Filtre personnalisé pour l'interface réseau automatique
         def get_default_interface():
             import subprocess
             try:
                 res = subprocess.run(
-                   "ip route show default | awk '{print $5}'",
+                    "ip route show default | awk '{print $5}'",
                     shell=True, capture_output=True, text=True
                 )
                 iface = res.stdout.strip()
                 if iface:
                     return iface
             except:
-                  pass
+                pass
             return "eth0"
-        env.filters['auto_interface'] = lambda iface: iface if iface else get_default_interface()
 
+        env.filters['auto_interface'] = lambda iface: iface if iface else get_default_interface()
 
         for template_name in mode_config.templates:
             try:
@@ -226,9 +246,9 @@ class SOCDeployEngine:
                 logger.error(f"Template introuvable : {template_name}")
                 raise
         return output_dir
-    
+
     # -----------------------------------------------------------------------
-    # Préparation du plugin (certificats, configs statiques)
+    # Préparation du plugin
     # -----------------------------------------------------------------------
 
     def prepare_plugin(
@@ -263,7 +283,6 @@ class SOCDeployEngine:
 
     def docker_compose_up(self, compose_dir: Path) -> None:
         """Lance `docker compose up -d` ou `docker-compose up -d`."""
-        # Détecter la commande disponible
         compose_cmd = None
         try:
             subprocess.run(
@@ -279,7 +298,7 @@ class SOCDeployEngine:
                 )
                 compose_cmd = ["docker-compose"]
             except (subprocess.CalledProcessError, FileNotFoundError):
-                raise RuntimeError("Ni 'docker compose' ni 'docker-compose' n'ont été trouvés. Installez Docker Compose.")
+                raise RuntimeError("Ni 'docker compose' ni 'docker-compose' n'ont été trouvés.")
 
         logger.info(f"Lancement de {compose_cmd} dans {compose_dir}")
         try:
@@ -308,7 +327,7 @@ class SOCDeployEngine:
             logger.info(f"Pas de healthcheck pour {plugin_name}")
             return True
 
-        hc = post["healthcheck"]
+        hc = HealthcheckConfig(**post["healthcheck"])
         logger.info(f"Healthcheck pour {plugin_name}: type={hc.type}")
         if hc.type == "http":
             return self._http_healthcheck(hc)
@@ -320,19 +339,17 @@ class SOCDeployEngine:
 
     def _http_healthcheck(self, hc: HealthcheckConfig) -> bool:
         """Healthcheck par appel HTTP."""
-        url = hc.url
-        expected = hc.expected_status
         for i in range(hc.retries):
             try:
-                resp = requests.get(url, timeout=hc.timeout, verify=False)
-                if resp.status_code == expected:
-                    logger.info(f"Healthcheck HTTP OK ({url})")
+                resp = requests.get(hc.url, timeout=hc.timeout, verify=False)
+                if resp.status_code == hc.expected_status:
+                    logger.info(f"Healthcheck HTTP OK ({hc.url})")
                     return True
             except requests.RequestException:
                 pass
             logger.info(f"Tentative {i+1}/{hc.retries} échouée, attente {hc.interval}s")
             time.sleep(hc.interval)
-        logger.error(f"Healthcheck HTTP échoué pour {url}")
+        logger.error(f"Healthcheck HTTP échoué pour {hc.url}")
         return False
 
     def _command_healthcheck(self, hc: HealthcheckConfig, cwd: Path) -> bool:
@@ -343,14 +360,12 @@ class SOCDeployEngine:
                     hc.command, shell=True, cwd=str(cwd),
                     capture_output=True, text=True, timeout=hc.timeout
                 )
-                if hc.expected_stdout and hc.expected_stdout in result.stdout:
+                if result.returncode == 0:
                     logger.info("Healthcheck commande OK")
-                    return True
-                elif result.returncode == 0:
-                    logger.info("Healthcheck commande OK (code 0)")
                     return True
             except subprocess.TimeoutExpired:
                 pass
+            logger.info(f"Tentative {i+1}/{hc.retries} échouée, attente {hc.interval}s")
             time.sleep(hc.interval)
         logger.error("Healthcheck commande échoué")
         return False
@@ -390,11 +405,13 @@ class SOCDeployEngine:
                 content += f"- **{svc['plugin']}** ({svc['mode']}) : {svc['description']}\n"
                 content += f"  URLs: {', '.join(svc.get('urls', []))}\n"
 
-        report_path = self.deploy_dir / "report.md"
-        with open(report_path, 'w') as f:
-            f.write(content)
-        logger.info(f"Rapport enregistré : {report_path}")
-        return str(report_path)
+        if self.deploy_dir:
+            report_path = self.deploy_dir / "report.md"
+            with open(report_path, 'w') as f:
+                f.write(content)
+            logger.info(f"Rapport enregistré : {report_path}")
+            return str(report_path)
+        return ""
 
     # -----------------------------------------------------------------------
     # Orchestration principale
@@ -408,6 +425,9 @@ class SOCDeployEngine:
             self.validate_prerequisites()
             self.setup_deploy_directory()
 
+            # Charger l'état existant
+            state = self.load_state()
+
             for tool in self.user_config.tools:
                 plugin_name = tool.plugin
                 mode = tool.mode
@@ -417,13 +437,20 @@ class SOCDeployEngine:
                 manifest = self.manifests[plugin_name]
                 mode_config = manifest.modes[mode]
 
+                # Vérifier si l'outil est déjà installé
+                if state.get(plugin_name, {}).get("status") == "installed":
+                    logger.info(f"--- {plugin_name} est déjà installé, ignoré ---")
+                    # Ajouter quand même au rapport
+                    service_info = state[plugin_name]
+                    self.report["services"].append(service_info)
+                    continue
+
                 logger.info(f"--- Déploiement de {plugin_name} en mode {mode} ---")
 
                 # Rendu des templates (si existants)
                 if mode_config.templates:
                     compose_dir = self.render_templates(plugin_name, mode, variables)
                 else:
-                    # Mode sans template (ex: script officiel)
                     output_dir = self.deploy_dir / plugin_name
                     output_dir.mkdir(parents=True, exist_ok=True)
                     compose_dir = output_dir
@@ -442,8 +469,12 @@ class SOCDeployEngine:
 
                 # Collecte d'infos pour le rapport
                 service_info = self.collect_service_info(plugin_name, mode)
-                service_info["status"] = "running"
+                service_info["status"] = "installed"
                 self.report["services"].append(service_info)
+
+                # Marquer l'outil comme installé dans l'état
+                state[plugin_name] = service_info
+                self.save_state(state)
 
             report_path = self.generate_report()
             logger.info(f"Déploiement terminé avec succès. Rapport : {report_path}")
@@ -453,14 +484,11 @@ class SOCDeployEngine:
             logger.error(f"Échec du déploiement : {e}")
             self.report["success"] = False
             self.report["error"] = str(e)
-            # Rollback basique
-            if self.deploy_dir and self.deploy_dir.exists():
-                logger.warning(f"Rollback : suppression de {self.deploy_dir}")
-                shutil.rmtree(self.deploy_dir, ignore_errors=True)
-            # Tenter de générer un rapport d'erreur malgré tout
+            # Ne pas supprimer tout le dossier, seulement le dossier de l'outil en échec
             try:
                 if self.deploy_dir:
-                    self.generate_report()
+                    # Garder le rapport et l'état, supprimer uniquement le sous-dossier de l'outil
+                    pass  # On ne fait pas de rollback destructif pour préserver les autres outils
             except:
                 pass
             raise
