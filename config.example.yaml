@@ -8,4 +8,4 @@ tools:
     mode: ids
     variables:
       interface: ""
-      auto_rules: true
+      auto_rules: false
