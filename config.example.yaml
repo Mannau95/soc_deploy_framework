@@ -7,5 +7,5 @@ tools:
   - plugin: suricata
     mode: ids
     variables:
-      interface: ""        # laisser vide pour détection auto
-      auto_rules: true     # true pour activer les règles automatiquement
+      interface: ""
+      auto_rules: true

@@ -1,5 +1,5 @@
 name: suricata
-version: "7.0"
+version: "8.0"
 description: "Suricata IDS/IPS"
 modes:
   ids:

@@ -7,6 +7,7 @@ outputs:
   - fast:
       enabled: yes
       filename: fast.log
+      append: yes
   - eve-log:
       enabled: yes
       filename: eve.json
@@ -18,5 +19,4 @@ outputs:
         - ssh
         - smtp
         - flow
-        - netflow
         - metadata
