@@ -14,7 +14,7 @@ services:
       - ./config/suricata.yaml:/etc/suricata/suricata.yaml:ro
     command: >
       {% if mode == "ips" %}
-      suricata -i {{ interface | auto_interface }} -c /etc/suricata/suricata.yaml -q 0
+      suricata -q 0 -c /etc/suricata/suricata.yaml
       {% else %}
       suricata -i {{ interface | auto_interface }} -c /etc/suricata/suricata.yaml --af-packet
       {% endif %}
