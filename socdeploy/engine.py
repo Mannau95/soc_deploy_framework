@@ -48,7 +48,7 @@ class ModeConfig(BaseModel):
     """Un mode d'installation pour un outil."""
     description: str
     prerequisites: Dict[str, Any]
-    templates: List[str]
+    templates: List[str]= []
     post_install: Optional[Dict[str, HealthcheckConfig]] = None
 
 class PluginManifest(BaseModel):
