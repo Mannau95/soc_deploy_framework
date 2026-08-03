@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Préparation Wazuh – génération des certificats et copie des configs."""
+"""Préparation Wazuh Docker – génération des certificats et copie des configs."""
 
 import sys, json, shutil, subprocess, os
 from pathlib import Path
@@ -14,10 +14,9 @@ def run(cmd, cwd=None):
 def main():
     deploy_dir = Path(sys.argv[1])
     variables = json.loads(sys.argv[2])
-    admin_password = variables.get("admin_password", "Admin123!")
     plugin_dir = Path(__file__).resolve().parent
 
-    # 1. Copier les configurations (dossier config/ du plugin)
+    # 1. Copier les configurations
     config_src = plugin_dir / "config"
     if config_src.exists():
         dest = deploy_dir / "config"
@@ -31,7 +30,7 @@ def main():
     for comp in ["wazuh-indexer", "wazuh-manager", "wazuh-dashboard"]:
         (certs_dir / comp).mkdir(parents=True, exist_ok=True)
 
-    # 3. Générer les certificats avec openssl
+    # 3. Fichier de configuration OpenSSL
     ssl_conf = certs_dir / "openssl.cnf"
     ssl_conf.write_text("""
 [ req ]
@@ -66,17 +65,20 @@ DNS.4 = localhost
 IP.1 = 127.0.0.1
 """)
 
+    # 4. Générer la CA
     ca_key = certs_dir / "ca-key.pem"
     ca_cert = certs_dir / "ca.pem"
     run(f"openssl genrsa -out {ca_key} 2048")
     run(f"openssl req -new -x509 -days 3650 -key {ca_key} -out {ca_cert} -config {ssl_conf} -extensions v3_ca")
     print("CA générée.")
 
+    # 5. Générer les certificats pour chaque composant
     components = {
         "wazuh-indexer": "wazuh.indexer",
         "wazuh-manager": "wazuh.manager",
         "wazuh-dashboard": "wazuh.dashboard"
     }
+
     for folder, common_name in components.items():
         comp_dir = certs_dir / folder
         key = comp_dir / f"{folder}.key"
@@ -86,10 +88,12 @@ IP.1 = 127.0.0.1
         run(f"openssl genrsa -out {key} 2048")
         run(f"openssl req -new -key {key} -out {csr} -subj '/CN={common_name}'")
         run(f"openssl x509 -req -days 3650 -in {csr} -CA {ca_cert} -CAkey {ca_key} -out {cert} -extfile {ssl_conf} -extensions v3_req")
+        # Copier le CA cert en tant que root-ca.pem (nom attendu par le dashboard)
         shutil.copy(ca_cert, comp_dir / "root-ca.pem")
+        # Renommer la clé pour correspondre au nom attendu par les conteneurs
         key.rename(comp_dir / f"{folder}-key.pem")
 
-    # Ajuster les permissions pour les conteneurs
+    # 6. Ajuster les permissions pour les conteneurs
     for folder in components:
         comp_dir = certs_dir / folder
         for f in comp_dir.iterdir():

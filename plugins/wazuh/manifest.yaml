@@ -1,6 +1,6 @@
 name: wazuh
 version: "4.14.0"
-description: "Wazuh SIEM (single-node Docker officiel)"
+description: "Wazuh SIEM (single-node Docker)"
 modes:
   single-node:
     description: "Indexer + Manager + Dashboard en conteneurs"
@@ -15,5 +15,5 @@ modes:
         url: "https://localhost"
         expected_status: 200
         timeout: 30
-        retries: 40
+        retries: 10
         interval: 15
