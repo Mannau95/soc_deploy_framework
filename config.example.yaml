@@ -1,11 +1,11 @@
 stack_name: "lab-soc"
 tools:
   - plugin: wazuh
-    mode: auto-install
+    mode: single-node
     variables:
       admin_password: "MyS3cur3P@ss!"
   - plugin: suricata
-    mode: ips
+    mode:  ips
     variables:
       interface: ""
       auto_rules: false

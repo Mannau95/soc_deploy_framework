@@ -1,48 +1,101 @@
 #!/usr/bin/env python3
-"""Préparation Wazuh via le script d'installation rapide officiel."""
-import sys, json, subprocess, shutil
+"""Préparation Wazuh – génération des certificats et copie des configs."""
+
+import sys, json, shutil, subprocess, os
 from pathlib import Path
+
+def run(cmd, cwd=None):
+    result = subprocess.run(cmd, shell=True, cwd=cwd, capture_output=True, text=True)
+    if result.returncode != 0:
+        print(f"Erreur: {cmd}\n{result.stderr}")
+        sys.exit(1)
+    return result.stdout.strip()
 
 def main():
     deploy_dir = Path(sys.argv[1])
-    deploy_dir.mkdir(parents=True, exist_ok=True)
     variables = json.loads(sys.argv[2])
     admin_password = variables.get("admin_password", "Admin123!")
-
     plugin_dir = Path(__file__).resolve().parent
-    install_script = plugin_dir / "wazuh-install.sh"
 
-    shutil.copy(install_script, deploy_dir / "wazuh-install.sh")
-    (deploy_dir / "wazuh-install.sh").chmod(0o755)
+    # 1. Copier les configurations (dossier config/ du plugin)
+    config_src = plugin_dir / "config"
+    if config_src.exists():
+        dest = deploy_dir / "config"
+        if dest.exists():
+            shutil.rmtree(dest)
+        shutil.copytree(config_src, dest)
+        print("Configurations copiées.")
 
-    print("Lancement de l'installation rapide Wazuh...")
-    result = subprocess.run(
-        ["sudo", "bash", str(install_script), "--all-in-one", "--overwrite"],
-        cwd=str(deploy_dir),
-        capture_output=True,
-        text=True,
-        env={
-            **__import__('os').environ,
-            "WAZUH_PASSWORD": admin_password,
-            "KIBANA_PASSWORD": admin_password,
-            "WAZUH_ADMIN_PASSWORD": admin_password,
-        }
-    )
-    if result.stdout:
-        print(result.stdout)
-    if result.stderr:
-        print(result.stderr)
-    if result.returncode != 0:
-        print("Erreur lors de l'installation.")
-        sys.exit(1) 
-        # Restaurer la propriété du dossier de déploiement pour l'utilisateur courant
-    import os, pwd
-    uid = os.getuid()
-    gid = os.getgid()
-    user = pwd.getpwuid(uid).pw_name
-    subprocess.run(["sudo", "chown", "-R", f"{user}:{user}", str(deploy_dir.parent)])
-    print(f"Propriété du dossier de déploiement restaurée pour {user}.")
-    print("Installation terminée avec succès.")
+    # 2. Créer les dossiers pour les certificats
+    certs_dir = deploy_dir / "certs"
+    for comp in ["wazuh-indexer", "wazuh-manager", "wazuh-dashboard"]:
+        (certs_dir / comp).mkdir(parents=True, exist_ok=True)
+
+    # 3. Générer les certificats avec openssl
+    ssl_conf = certs_dir / "openssl.cnf"
+    ssl_conf.write_text("""
+[ req ]
+default_bits = 2048
+distinguished_name = req_distinguished_name
+x509_extensions = v3_ca
+prompt = no
+
+[ req_distinguished_name ]
+C = FR
+ST = IDF
+L = Paris
+O = SOCDeploy
+OU = Wazuh
+CN = wazuh.internal
+
+[ v3_ca ]
+basicConstraints = critical,CA:true
+keyUsage = critical, keyCertSign, cRLSign
+subjectAltName = DNS:wazuh.indexer, DNS:wazuh.manager, DNS:wazuh.dashboard, DNS:localhost, IP:127.0.0.1
+
+[ v3_req ]
+basicConstraints = CA:FALSE
+keyUsage = nonRepudiation, digitalSignature, keyEncipherment
+subjectAltName = @alt_names
+
+[ alt_names ]
+DNS.1 = wazuh.indexer
+DNS.2 = wazuh.manager
+DNS.3 = wazuh.dashboard
+DNS.4 = localhost
+IP.1 = 127.0.0.1
+""")
+
+    ca_key = certs_dir / "ca-key.pem"
+    ca_cert = certs_dir / "ca.pem"
+    run(f"openssl genrsa -out {ca_key} 2048")
+    run(f"openssl req -new -x509 -days 3650 -key {ca_key} -out {ca_cert} -config {ssl_conf} -extensions v3_ca")
+    print("CA générée.")
+
+    components = {
+        "wazuh-indexer": "wazuh.indexer",
+        "wazuh-manager": "wazuh.manager",
+        "wazuh-dashboard": "wazuh.dashboard"
+    }
+    for folder, common_name in components.items():
+        comp_dir = certs_dir / folder
+        key = comp_dir / f"{folder}.key"
+        csr = comp_dir / f"{folder}.csr"
+        cert = comp_dir / f"{folder}.pem"
+
+        run(f"openssl genrsa -out {key} 2048")
+        run(f"openssl req -new -key {key} -out {csr} -subj '/CN={common_name}'")
+        run(f"openssl x509 -req -days 3650 -in {csr} -CA {ca_cert} -CAkey {ca_key} -out {cert} -extfile {ssl_conf} -extensions v3_req")
+        shutil.copy(ca_cert, comp_dir / "root-ca.pem")
+        key.rename(comp_dir / f"{folder}-key.pem")
+
+    # Ajuster les permissions pour les conteneurs
+    for folder in components:
+        comp_dir = certs_dir / folder
+        for f in comp_dir.iterdir():
+            os.chmod(f, 0o644)
+
+    print("Certificats générés avec succès.")
 
 if __name__ == "__main__":
-    main() 
+    main()
