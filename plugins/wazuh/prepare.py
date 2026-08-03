@@ -28,7 +28,7 @@ def main():
 
     print("Lancement de l'installation rapide Wazuh...")
     result = subprocess.run(
-        ["sudo", "bash", str(deploy_dir / "wazuh-install.sh"), "--all-in-one", "--overwrite"],
+        ["sudo", "bash",   "./wazuh-install.sh", "--all-in-one", "--overwrite"],
         cwd=str(deploy_dir),
         capture_output=True,
         text=True,
