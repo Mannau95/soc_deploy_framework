@@ -9,6 +9,9 @@ def main():
     variables = json.loads(sys.argv[2])
     admin_password = variables.get("admin_password", "Admin123!")
 
+    # --- Créer le dossier de déploiement (évite l'erreur "FileNotFoundError") ---
+    deploy_dir.mkdir(parents=True, exist_ok=True)
+
     # --- Nettoyage préventif de tout ancien agent Wazuh ---
     print("Nettoyage des anciennes installations Wazuh...")
     subprocess.run(["sudo", "rm", "-f", "/var/lib/dpkg/info/wazuh-agent.prerm"], check=False)
@@ -19,6 +22,7 @@ def main():
     plugin_dir = Path(__file__).resolve().parent
     install_script = plugin_dir / "wazuh-install.sh"
 
+    # Copier le script d'installation dans le dossier de déploiement
     shutil.copy(install_script, deploy_dir / "wazuh-install.sh")
     (deploy_dir / "wazuh-install.sh").chmod(0o755)
 
