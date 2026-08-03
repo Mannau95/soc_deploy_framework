@@ -1,9 +1,21 @@
 name: wazuh
 version: "4.14.0"
-description: "Wazuh SIEM (single-node Docker)"
+description: "Wazuh SIEM"
 modes:
+  auto-install:
+    description: "Déploiement automatisé via le script officiel (recommandé)"
+    prerequisites:
+      docker: true
+    post_install:
+      healthcheck:
+        type: http
+        url: "https://localhost"
+        expected_status: 200
+        timeout: 30
+        retries: 40
+        interval: 15
   single-node:
-    description: "Indexer + Manager + Dashboard en conteneurs"
+    description: "Indexer + Manager + Dashboard en conteneurs Docker"
     prerequisites:
       docker: true
       ports: [443, 55000, 1514, 1515, 1516]
@@ -15,5 +27,5 @@ modes:
         url: "https://localhost"
         expected_status: 200
         timeout: 30
-        retries: 10
+        retries: 40
         interval: 15

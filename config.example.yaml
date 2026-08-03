@@ -1,7 +1,7 @@
 stack_name: "lab-soc"
 tools:
   - plugin: wazuh
-    mode: single-node
+    mode: auto-install
     variables:
       admin_password: "MyS3cur3P@ss!"
   - plugin: suricata
