@@ -1,0 +1,40 @@
+services:
+  misp-db:
+    image: mariadb:10.5
+    container_name: misp-db
+    restart: unless-stopped
+    environment:
+      - MYSQL_DATABASE=misp
+      - MYSQL_USER=misp
+      - MYSQL_PASSWORD=misp_pass
+      - MYSQL_ROOT_PASSWORD=misp_root_pass
+    volumes:
+      - ./data/mysql:/var/lib/mysql
+
+  misp-redis:
+    image: redis:alpine
+    container_name: misp-redis
+    restart: unless-stopped
+    volumes:
+      - ./data/redis:/data
+
+  misp-core:
+    image: coolacid/misp-docker:core-latest
+    container_name: misp-core
+    restart: unless-stopped
+    depends_on:
+      - misp-db
+      - misp-redis
+    ports:
+      - "{{ https_port | default(8443) }}:443"
+    environment:
+      - "MYSQL_HOST=misp-db"
+      - "MYSQL_USER=misp"
+      - "MYSQL_PASSWORD=misp_pass"
+      - "MYSQL_DATABASE=misp"
+      - "REDIS_HOST=misp-redis"
+      - "MISP_BASEURL={{ base_url | default('https://localhost:8443') }}"
+      - "MISP_ADMIN_EMAIL={{ admin_email | default('admin@admin.test') }}"
+      - "MISP_ADMIN_PASSPHRASE={{ admin_password | default('admin') }}"
+    volumes:
+      - ./data/misp:/var/www/MISP

@@ -1,0 +1,12 @@
+# Règles pass automatiques pour éviter le blocage du trafic légitime en mode IPS
+{% if pass_ssh is not defined or pass_ssh %}
+pass tcp any any -> any 22 (msg:"PASS SSH"; sid:1000001; rev:1;)
+pass tcp any 22 -> any any (msg:"PASS SSH Response"; sid:1000002; rev:1;)
+{% endif %}
+
+{% if pass_dns is not defined or pass_dns %}
+pass udp any any -> any 53 (msg:"PASS DNS"; sid:1000003; rev:1;)
+pass udp any 53 -> any any (msg:"PASS DNS Response"; sid:1000004; rev:1;)
+{% endif %}
+
+pass icmp any any -> any any (msg:"PASS ICMP"; sid:1000005; rev:1;)

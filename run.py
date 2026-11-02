@@ -1,10 +1,7 @@
-from pathlib import Path
-from socdeploy.engine import SOCDeployEngine
+#!/usr/bin/env python3
+"""Point d'entrée direct pour exécuter socdeploy."""
 
-config = Path("config.example.yaml")
-engine = SOCDeployEngine(config)
-try:
-    report = engine.deploy()
-    print(f"Déploiement réussi, rapport : {report}")
-except Exception as e:
-    print(f"Erreur : {e}")
+from socdeploy.cli import app
+
+if __name__ == "__main__":
+    app()

@@ -2,10 +2,23 @@ stack_name: "lab-soc"
 tools:
   - plugin: wazuh
     mode: auto-install
+    method: native
     variables:
       admin_password: "MyS3cur3P@ss!"
+
   - plugin: suricata
-    mode: ips
+    mode: ids
+    method: docker
     variables:
-      interface: ""
-      auto_rules: false
+      interface: "eth0"
+      auto_rules: true
+
+  # Pour activer le mode IPS à la place :
+  # - plugin: suricata
+  #   mode: ips
+  #   method: docker
+  #   variables:
+  #     interface: "eth0"
+  #     auto_rules: true
+  #     pass_ssh: true
+  #     pass_dns: true

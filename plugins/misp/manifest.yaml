@@ -1,0 +1,49 @@
+name: misp
+display_name: "MISP Threat Intelligence"
+version: "2.4"
+category: threat-intel
+description: "Plateforme de partage, d'investigation et de corrélation d'indicateurs de compromission (IoCs) et renseignements cybermenaces (CTI)"
+homepage: "https://www.misp-project.org"
+
+modes:
+  standard:
+    description: "Serveur MISP Core complet avec base de données MariaDB et cache Redis"
+    methods:
+      docker:
+        templates:
+          - docker-compose.yml.j2
+        supported_os: [all]
+    requirements:
+      min_ram_mb: 4096
+      min_cpu: 2
+      ports: [8443]
+      root: false
+      docker: true
+    variables:
+      - name: https_port
+        prompt: "Port HTTPS d'accès à la plateforme MISP"
+        type: int
+        default: 8443
+        required: true
+      - name: admin_email
+        prompt: "Email du compte administrateur initial"
+        type: str
+        default: "admin@admin.test"
+        required: true
+      - name: admin_password
+        prompt: "Mot de passe administrateur par défaut"
+        type: password
+        default: "admin"
+        required: true
+      - name: base_url
+        prompt: "URL publique de base de MISP"
+        type: str
+        default: "https://localhost:8443"
+        required: true
+    healthcheck:
+      type: http
+      url: "https://localhost:8443"
+      expected_status: 200
+      timeout: 30
+      retries: 30
+      interval: 10

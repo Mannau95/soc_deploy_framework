@@ -1,495 +1,444 @@
-"""
-Moteur d'orchestration SOC Deploy.
+"""Moteur d'orchestration SOC Deploy Framework."""
 
-Responsabilités :
-- Charger la configuration utilisateur (config.yaml) et les manifestes des plugins.
-- Valider les prérequis (Docker disponible, ports libres).
-- Générer les fichiers de déploiement via Jinja2.
-- Piloter Docker Compose pour lancer les services.
-- Vérifier l'état de santé (healthchecks).
-- Produire un rapport de déploiement complet.
-- Gérer les erreurs avec rollback basique.
-- Gérer un fichier d'état pour ne pas réinstaller les outils déjà déployés.
-"""
-
-import subprocess
-import shutil
-import time
-import json
 import sys
-from pathlib import Path
-from typing import Dict, Any, List, Optional, Tuple
-
-import yaml
-import docker
-from docker.errors import DockerException
-from jinja2 import Environment, FileSystemLoader, TemplateNotFound
-from pydantic import BaseModel, ValidationError
-import requests
+import time
 import socket
+import importlib.util
+from pathlib import Path
+from typing import Dict, Any, List, Optional
+import requests
+import yaml
+from jinja2 import Environment, FileSystemLoader
 from loguru import logger
 
-# ---------------------------------------------------------------------------
-# Modèles de données (Pydantic)
-# ---------------------------------------------------------------------------
+from socdeploy.models import (
+    UserConfig, PluginManifest, ToolConfig, ServiceState, HealthcheckConfig
+)
+from socdeploy.catalog import PluginCatalog
+from socdeploy.system import system
+from socdeploy.state import StateManager
+from socdeploy.runners.docker import DockerComposeRunner
+from socdeploy.runners.native import NativeRunner
+from socdeploy.reporter import DeploymentReporter
 
-class HealthcheckConfig(BaseModel):
-    """Configuration d'un healthcheck dans un manifeste."""
-    type: str
-    url: Optional[str] = None
-    command: Optional[str] = None
-    expected_status: Optional[int] = None
-    expected_stdout: Optional[str] = None
-    timeout: int = 60
-    retries: int = 5
-    interval: int = 10
-
-class ModeConfig(BaseModel):
-    """Un mode d'installation pour un outil."""
-    description: str
-    prerequisites: Dict[str, Any]
-    templates: List[str]= []
-    post_install: Optional[Dict[str, HealthcheckConfig]] = None
-
-class PluginManifest(BaseModel):
-    """Structure d'un fichier manifest.yaml pour un plugin."""
-    name: str
-    version: str
-    description: str
-    modes: Dict[str, ModeConfig]
-
-class ToolConfig(BaseModel):
-    """Configuration d'un outil dans le fichier config.yaml utilisateur."""
-    plugin: str
-    mode: str
-    variables: Dict[str, Any] = {}
-
-class UserConfig(BaseModel):
-    """Fichier de configuration principal."""
-    stack_name: str
-    tools: List[ToolConfig]
-
-# ---------------------------------------------------------------------------
-# Classe principale du moteur
-# ---------------------------------------------------------------------------
 
 class SOCDeployEngine:
-    """Moteur de déploiement SOC."""
+    """Moteur principal de déploiement."""
 
-    def __init__(self, config_path: Path, plugins_dir: Path = Path("plugins")):
+    def __init__(
+        self,
+        config_path: Path,
+        plugins_dir: Path = Path("plugins"),
+        deploy_base_dir: Path = Path("deployments")
+    ):
         self.config_path = config_path
         self.plugins_dir = plugins_dir
+        self.deploy_base_dir = deploy_base_dir
+        self.catalog = PluginCatalog(plugins_dir)
         self.user_config: Optional[UserConfig] = None
-        self.manifests: Dict[str, PluginManifest] = {}
         self.deploy_dir: Optional[Path] = None
-        self.report: Dict[str, Any] = {"success": True, "services": []}
-        self.docker_client = None
+        self.state_mgr: Optional[StateManager] = None
+        self.docker_runner: Optional[DockerComposeRunner] = None
+        self.native_runner = NativeRunner()
+        self.reporter = DeploymentReporter()
 
-        # Configuration du logger
-        logger.remove()
-        logger.add(sys.stderr, level="INFO", format="<green>{time}</green> | <level>{message}</level>")
+    def load_config(self) -> UserConfig:
+        """Charge et valide le fichier de configuration utilisateur."""
+        if not self.config_path.exists():
+            raise FileNotFoundError(f"Fichier de configuration introuvable : {self.config_path}")
 
-    # -----------------------------------------------------------------------
-    # Chargement et validation
-    # -----------------------------------------------------------------------
-
-    def load_config(self) -> None:
-        """Charge le fichier de configuration utilisateur."""
         logger.info(f"Chargement de la configuration : {self.config_path}")
-        try:
-            with open(self.config_path, 'r') as f:
-                raw = yaml.safe_load(f)
-            self.user_config = UserConfig(**raw)
-        except FileNotFoundError:
-            logger.error(f"Fichier de config introuvable : {self.config_path}")
-            raise
-        except ValidationError as e:
-            logger.error(f"Configuration invalide : {e}")
-            raise
-
-    def load_plugin_manifest(self, plugin_name: str) -> PluginManifest:
-        """Charge et valide le manifeste d'un plugin."""
-        manifest_path = self.plugins_dir / plugin_name / "manifest.yaml"
-        logger.info(f"Chargement du manifeste : {manifest_path}")
-        if not manifest_path.exists():
-            raise FileNotFoundError(f"Plugin inconnu : {manifest_path}")
-        with open(manifest_path, 'r') as f:
+        with open(self.config_path, "r", encoding="utf-8") as f:
             raw = yaml.safe_load(f)
-        return PluginManifest(**raw)
 
-    def load_all_manifests(self) -> None:
-        """Charge tous les manifestes des outils demandés."""
-        for tool in self.user_config.tools:
-            if tool.plugin not in self.manifests:
-                self.manifests[tool.plugin] = self.load_plugin_manifest(tool.plugin)
-
-    # -----------------------------------------------------------------------
-    # Gestion de l'état de la stack
-    # -----------------------------------------------------------------------
-
-    def load_state(self) -> Dict[str, Any]:
-        """Charge l'état de la stack (outils déjà installés)."""
-        if not self.deploy_dir:
-            return {}
-        state_file = self.deploy_dir / "stack_state.json"
-        if state_file.exists():
-            with open(state_file, 'r') as f:
-                return json.load(f)
-        return {}
-
-    def save_state(self, state: Dict[str, Any]) -> None:
-        """Sauvegarde l'état de la stack."""
-        if not self.deploy_dir:
-            return
-        state_file = self.deploy_dir / "stack_state.json"
-        with open(state_file, 'w') as f:
-            json.dump(state, f, indent=2)
-
-    # -----------------------------------------------------------------------
-    # Vérifications des prérequis
-    # -----------------------------------------------------------------------
-
-    def check_docker(self) -> bool:
-        """Vérifie que le daemon Docker est accessible."""
-        try:
-            self.docker_client = docker.from_env()
-            self.docker_client.ping()
-            logger.info("Docker est opérationnel.")
-            return True
-        except DockerException:
-            logger.error("Docker n'est pas accessible.")
-            return False
-
-    def check_ports(self, ports: List[int]) -> bool:
-        """Vérifie qu'aucun processus n'écoute sur les ports donnés."""
-        for port in ports:
-            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            result = sock.connect_ex(('127.0.0.1', port))
-            sock.close()
-            if result == 0:
-                logger.error(f"Le port {port} est déjà utilisé.")
-                return False
-        logger.info(f"Ports libres : {ports}")
-        return True
+        self.user_config = UserConfig(**raw)
+        self.deploy_dir = self.deploy_base_dir / self.user_config.stack_name
+        self.state_mgr = StateManager(self.deploy_dir)
+        return self.user_config
 
     def validate_prerequisites(self) -> None:
-        """Valide tous les prérequis pour la stack entière."""
-        logger.info("Validation des prérequis...")
-        if not self.check_docker():
-            raise RuntimeError("Docker requis.")
-        for tool in self.user_config.tools:
-            manifest = self.manifests[tool.plugin]
-            mode = manifest.modes[tool.mode]
-            pre = mode.prerequisites
-            if pre.get("docker", False) and not self.docker_client:
-                raise RuntimeError(f"Docker requis pour {tool.plugin}")
-            ports = pre.get("ports", [])
-            if ports and not self.check_ports(ports):
-                raise RuntimeError(f"Ports requis pour {tool.plugin} non disponibles.")
-        logger.info("Tous les prérequis sont satisfaits.")
+        """Vérifie que le système respecte les exigences de tous les outils choisis."""
+        if not self.user_config:
+            raise RuntimeError("La configuration n'est pas chargée.")
 
-    # -----------------------------------------------------------------------
-    # Génération des fichiers de déploiement
-    # -----------------------------------------------------------------------
+        logger.info("Vérification des prérequis système...")
 
-    def setup_deploy_directory(self) -> None:
-        """Crée le répertoire de déploiement pour la stack (sans effacer un existant)."""
-        self.deploy_dir = Path("deployments") / self.user_config.stack_name
-        self.deploy_dir.mkdir(parents=True, exist_ok=True)
-        logger.info(f"Répertoire de déploiement : {self.deploy_dir}")
+        # 1. Vérification Docker
+        needs_docker = any(
+            t.method == "docker" or (
+                self.catalog.get_plugin(t.plugin) and
+                self.catalog.get_plugin(t.plugin).modes.get(t.mode) and
+                self.catalog.get_plugin(t.plugin).modes[t.mode].requirements.docker
+            )
+            for t in self.user_config.tools
+        )
+        if needs_docker:
+            if not system.is_docker_available():
+                raise RuntimeError("Docker est requis pour l'un des outils choisis mais n'est pas opérationnel.")
+            self.docker_runner = DockerComposeRunner()
 
-    def render_templates(self, plugin_name: str, mode: str, variables: Dict[str, Any]) -> Path:
-        """Génère les fichiers pour un plugin à partir des templates Jinja2."""
-        plugin_dir = self.plugins_dir / plugin_name
-        template_dir = plugin_dir / "templates"
-        output_dir = self.deploy_dir / plugin_name
-        output_dir.mkdir(parents=True, exist_ok=True)
+        # 2. Vérification root
+        needs_root = any(
+            self.catalog.get_plugin(t.plugin) and
+            self.catalog.get_plugin(t.plugin).modes.get(t.mode) and
+            self.catalog.get_plugin(t.plugin).modes[t.mode].requirements.root
+            for t in self.user_config.tools
+        )
+        if needs_root and not system.is_root and system.os_family != "windows":
+            logger.warning("Certains outils nécessitent les droits root (ex: iptables, scripts système).")
 
-        manifest = self.manifests[plugin_name]
-        mode_config = manifest.modes[mode]
+        # 3. Vérification des ports
+        all_ports: List[int] = []
+        for t in self.user_config.tools:
+            manifest = self.catalog.get_plugin(t.plugin)
+            if manifest and t.mode in manifest.modes:
+                all_ports.extend(manifest.modes[t.mode].requirements.ports)
 
-        if not mode_config.templates:
-            return output_dir
+        busy_ports = system.check_ports(all_ports)
+        if busy_ports:
+            raise RuntimeError(f"Les ports suivants sont déjà occupés sur l'hôte : {busy_ports}")
 
-        if not template_dir.exists():
-            raise FileNotFoundError(f"Aucun dossier templates pour {plugin_name}")
+        logger.info("Tous les prérequis sont validés avec succès.")
 
-        env = Environment(loader=FileSystemLoader(str(template_dir)))
+    def _load_hooks(self, plugin_name: str):
+        """Charge dynamiquement le module hooks.py ou prepare.py d'un plugin."""
+        hooks_file = self.plugins_dir / plugin_name / "hooks.py"
+        if not hooks_file.exists():
+            hooks_file = self.plugins_dir / plugin_name / "prepare.py"
+            if not hooks_file.exists():
+                return None
 
-        # Filtre personnalisé pour l'interface réseau automatique
-        def get_default_interface():
-            import subprocess
-            try:
-                res = subprocess.run(
-                    "ip route show default | awk '{print $5}'",
-                    shell=True, capture_output=True, text=True
-                )
-                iface = res.stdout.strip()
-                if iface:
-                    return iface
-            except:
-                pass
-            return "eth0"
+        spec = importlib.util.spec_from_file_location(f"plugins.{plugin_name}.hooks", hooks_file)
+        if spec and spec.loader:
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+            return module
+        return None
 
-        env.filters['auto_interface'] = lambda iface: iface if iface else get_default_interface()
-
-        for template_name in mode_config.templates:
-            try:
-                template = env.get_template(template_name)
-                out_name = template_name[:-3] if template_name.endswith('.j2') else template_name
-                output_path = output_dir / out_name
-                content = template.render(variables)
-                with open(output_path, 'w') as f:
-                    f.write(content)
-                logger.info(f"Template rendu : {output_path}")
-            except TemplateNotFound:
-                logger.error(f"Template introuvable : {template_name}")
-                raise
-        return output_dir
-
-    # -----------------------------------------------------------------------
-    # Préparation du plugin
-    # -----------------------------------------------------------------------
-
-    def prepare_plugin(
-        self,
-        plugin_name: str,
-        mode: str,
-        output_dir: Path,
-        variables: Dict[str, Any]
-    ) -> None:
-        """Exécute le script de préparation du plugin s'il existe."""
-        prepare_script: Path = self.plugins_dir / plugin_name / "prepare.py"
-        if not prepare_script.exists():
-            logger.info(f"Aucun script de préparation pour {plugin_name}")
+    def render_templates(self, plugin_name: str, mode: str, output_dir: Path, variables: Dict[str, Any]) -> None:
+        """Rendu des fichiers templates Jinja2 (docker-compose, configs)."""
+        manifest = self.catalog.get_plugin(plugin_name)
+        if not manifest or mode not in manifest.modes:
             return
 
-        logger.info(f"Exécution du script de préparation pour {plugin_name}")
-        try:
-            result = subprocess.run(
-                [sys.executable, str(prepare_script), str(output_dir), json.dumps(variables)],
-                check=True,
-                capture_output=True,
-                text=True
-            )
-            logger.info(f"Préparation terminée : {result.stdout}")
-        except subprocess.CalledProcessError as e:
-            logger.error(f"Échec du script de préparation pour {plugin_name}: {e.stderr}")
-            raise
-
-    # -----------------------------------------------------------------------
-    # Déploiement via Docker Compose
-    # -----------------------------------------------------------------------
-
-    def docker_compose_up(self, compose_dir: Path) -> None:
-        """Lance `docker compose up -d` ou `docker-compose up -d`."""
-        compose_cmd = None
-        try:
-            subprocess.run(
-                ["docker", "compose", "version"],
-                check=True, capture_output=True, text=True
-            )
-            compose_cmd = ["docker", "compose"]
-        except (subprocess.CalledProcessError, FileNotFoundError):
-            try:
-                subprocess.run(
-                    ["docker-compose", "version"],
-                    check=True, capture_output=True, text=True
-                )
-                compose_cmd = ["docker-compose"]
-            except (subprocess.CalledProcessError, FileNotFoundError):
-                raise RuntimeError("Ni 'docker compose' ni 'docker-compose' n'ont été trouvés.")
-
-        logger.info(f"Lancement de {compose_cmd} dans {compose_dir}")
-        try:
-            subprocess.run(
-                compose_cmd + ["up", "-d"],
-                cwd=str(compose_dir),
-                check=True,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE
-            )
-            logger.info("Conteneurs démarrés avec succès.")
-        except subprocess.CalledProcessError as e:
-            logger.error(f"Erreur Docker Compose : {e.stderr.decode()}")
-            raise
-
-    # -----------------------------------------------------------------------
-    # Healthchecks
-    # -----------------------------------------------------------------------
-
-    def perform_healthcheck(self, plugin_name: str, mode: str, output_dir: Path) -> bool:
-        """Exécute le healthcheck défini dans le manifeste du plugin."""
-        manifest = self.manifests[plugin_name]
         mode_config = manifest.modes[mode]
-        post = mode_config.post_install
-        if not post or "healthcheck" not in post:
-            logger.info(f"Pas de healthcheck pour {plugin_name}")
-            return True
+        templates: List[str] = []
 
-        hc = post["healthcheck"]
-        logger.info(f"Healthcheck pour {plugin_name}: type={hc.type}")
-        if hc.type == "http":
-            return self._http_healthcheck(hc)
-        elif hc.type == "command":
-            return self._command_healthcheck(hc, output_dir)
-        else:
-            logger.error(f"Type de healthcheck inconnu: {hc.type}")
+        # Récupérer la liste des templates
+        if "docker" in mode_config.methods:
+            templates = mode_config.methods["docker"].templates
+        elif mode_config.templates:
+            templates = mode_config.templates
+
+        if not templates:
+            return
+
+        templates_dir = self.plugins_dir / plugin_name / "templates"
+        if not templates_dir.exists():
+            return
+
+        env = Environment(loader=FileSystemLoader(str(templates_dir)))
+        env.filters["auto_interface"] = lambda iface: iface if iface else system.get_default_interface()
+
+        ctx = {
+            **variables,
+            "mode": mode,
+            "stack_name": self.user_config.stack_name,
+            "interface": variables.get("interface", system.get_default_interface())
+        }
+
+        for tmpl_name in templates:
+            tmpl = env.get_template(tmpl_name)
+            out_name = tmpl_name[:-3] if tmpl_name.endswith(".j2") else tmpl_name
+            out_path = output_dir / out_name
+            content = tmpl.render(**ctx)
+            with open(out_path, "w", encoding="utf-8") as f:
+                f.write(content)
+            logger.info(f"Fichier généré : {out_path}")
+
+    def perform_healthcheck(self, hc: HealthcheckConfig, cwd: Path) -> bool:
+        """Exécute la vérification de santé d'un service."""
+        logger.info(f"Vérification de santé (type: {hc.type}, retries: {hc.retries})...")
+
+        if hc.type == "http" and hc.url:
+            for i in range(hc.retries):
+                try:
+                    resp = requests.get(hc.url, timeout=hc.timeout, verify=False)
+                    if resp.status_code == (hc.expected_status or 200):
+                        logger.info(f"Healthcheck HTTP réussi sur {hc.url}")
+                        return True
+                except Exception:
+                    pass
+                logger.debug(f"Tentative {i+1}/{hc.retries} en attente de {hc.url}...")
+                time.sleep(hc.interval)
             return False
 
-    def _http_healthcheck(self, hc: HealthcheckConfig) -> bool:
-        """Healthcheck par appel HTTP."""
-        for i in range(hc.retries):
-            try:
-                resp = requests.get(hc.url, timeout=hc.timeout, verify=False)
-                if resp.status_code == hc.expected_status:
-                    logger.info(f"Healthcheck HTTP OK ({hc.url})")
-                    return True
-            except requests.RequestException:
-                pass
-            logger.info(f"Tentative {i+1}/{hc.retries} échouée, attente {hc.interval}s")
-            time.sleep(hc.interval)
-        logger.error(f"Healthcheck HTTP échoué pour {hc.url}")
-        return False
+        elif hc.type == "command" and hc.command:
+            import subprocess
+            for i in range(hc.retries):
+                try:
+                    res = subprocess.run(
+                        hc.command, shell=True, cwd=str(cwd),
+                        capture_output=True, text=True, timeout=hc.timeout
+                    )
+                    if res.returncode == 0:
+                        logger.info("Healthcheck commande réussi.")
+                        return True
+                except Exception:
+                    pass
+                logger.debug(f"Tentative {i+1}/{hc.retries} en attente de '{hc.command}'...")
+                time.sleep(hc.interval)
+            return False
 
-    def _command_healthcheck(self, hc: HealthcheckConfig, cwd: Path) -> bool:
-        """Healthcheck par exécution d'une commande shell."""
-        for i in range(hc.retries):
-            try:
-                result = subprocess.run(
-                    hc.command, shell=True, cwd=str(cwd),
-                    capture_output=True, text=True, timeout=hc.timeout
-                )
-                if result.returncode == 0:
-                    logger.info("Healthcheck commande OK")
-                    return True
-            except subprocess.TimeoutExpired:
-                pass
-            logger.info(f"Tentative {i+1}/{hc.retries} échouée, attente {hc.interval}s")
-            time.sleep(hc.interval)
-        logger.error("Healthcheck commande échoué")
-        return False
+        elif hc.type == "tcp" and hc.port:
+            for i in range(hc.retries):
+                with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                    s.settimeout(2.0)
+                    if s.connect_ex(("127.0.0.1", hc.port)) == 0:
+                        logger.info(f"Healthcheck TCP réussi sur le port {hc.port}")
+                        return True
+                time.sleep(hc.interval)
+            return False
 
-    # -----------------------------------------------------------------------
-    # Rapport
-    # -----------------------------------------------------------------------
+        return True
 
-    def collect_service_info(self, plugin_name: str, mode: str) -> Dict[str, Any]:
-        """Collecte les informations sur le service déployé pour le rapport."""
-        manifest = self.manifests[plugin_name]
-        mode_config = manifest.modes[mode]
-        info = {
-            "plugin": plugin_name,
-            "version": manifest.version,
-            "mode": mode,
-            "description": manifest.description,
-            "urls": [],
-            "credentials": {}
+    def deploy_tool(self, tool: ToolConfig) -> ServiceState:
+        """Déploie un outil individuel."""
+        manifest = self.catalog.get_plugin(tool.plugin)
+        if not manifest:
+            raise ValueError(f"Plugin inconnu : '{tool.plugin}'")
+
+        if tool.mode not in manifest.modes:
+            raise ValueError(f"Mode inconnu '{tool.mode}' pour le plugin '{tool.plugin}'")
+
+        mode_config = manifest.modes[tool.mode]
+        tool_dir = self.deploy_dir / tool.plugin
+        tool_dir.mkdir(parents=True, exist_ok=True)
+
+        hooks = self._load_hooks(tool.plugin)
+        hook_ctx = {
+            "deploy_dir": tool_dir,
+            "variables": tool.variables,
+            "mode": tool.mode,
+            "method": tool.method,
+            "system": system.to_dict(),
         }
-        pre = mode_config.prerequisites
-        ports = pre.get("ports", [])
-        if ports:
-            info["urls"].append(f"localhost:{ports[0]}")
-        return info
 
-    def generate_report(self) -> str:
-        """Génère le rapport markdown et l'écrit dans le répertoire de déploiement."""
-        template_path = Path("templates") / "report.md.j2"
-        if template_path.exists():
-            env = Environment(loader=FileSystemLoader("templates"))
-            template = env.get_template("report.md.j2")
-            content = template.render(report=self.report, config=self.user_config)
-        else:
-            content = f"# Rapport de déploiement {self.user_config.stack_name}\n\n"
-            for svc in self.report["services"]:
-                content += f"- **{svc['plugin']}** ({svc['mode']}) : {svc['description']}\n"
-                content += f"  URLs: {', '.join(svc.get('urls', []))}\n"
-
-        if self.deploy_dir:
-            report_path = self.deploy_dir / "report.md"
-            with open(report_path, 'w') as f:
-                f.write(content)
-            logger.info(f"Rapport enregistré : {report_path}")
-            return str(report_path)
-        return ""
-
-    # -----------------------------------------------------------------------
-    # Orchestration principale
-    # -----------------------------------------------------------------------
-
-    def deploy(self) -> str:
-        """Méthode principale : orchestre tout le déploiement."""
         try:
-            self.load_config()
-            self.load_all_manifests()
-            self.validate_prerequisites()
-            self.setup_deploy_directory()
+            # 1. Pre-install hook
+            if hooks and hasattr(hooks, "pre_install"):
+                logger.info(f"[{tool.plugin}] Exécution du hook pre_install...")
+                hooks.pre_install(hook_ctx)
 
-            # Charger l'état existant
-            state = self.load_state()
+            # 2. Exécution selon la méthode
+            if tool.method == "docker":
+                self.render_templates(tool.plugin, tool.mode, tool_dir, tool.variables)
+                if not self.docker_runner:
+                    self.docker_runner = DockerComposeRunner()
+                self.docker_runner.up(tool_dir)
 
-            for tool in self.user_config.tools:
-                plugin_name = tool.plugin
-                mode = tool.mode
-                variables = tool.variables
-                variables["mode"] = mode   
-                variables["stack_name"] = self.user_config.stack_name
+            elif tool.method == "native":
+                if hooks and hasattr(hooks, "install_native"):
+                    logger.info(f"[{tool.plugin}] Exécution de install_native...")
+                    hooks.install_native(hook_ctx)
+                elif hooks and hasattr(hooks, "install"):
+                    hooks.install(hook_ctx)
 
-                manifest = self.manifests[plugin_name]
-                mode_config = manifest.modes[mode]
+            # 3. Healthcheck
+            hc = mode_config.healthcheck
+            if hc:
+                if not self.perform_healthcheck(hc, tool_dir):
+                    raise RuntimeError(f"Échec de la vérification de santé pour {tool.plugin}")
 
-                # Vérifier si l'outil est déjà installé
-                if state.get(plugin_name, {}).get("status") == "installed":
-                    logger.info(f"--- {plugin_name} est déjà installé, ignoré ---")
-                    # Ajouter quand même au rapport
-                    service_info = state[plugin_name]
-                    self.report["services"].append(service_info)
-                    continue
+            # 4. Post-install hook
+            if hooks and hasattr(hooks, "post_install"):
+                logger.info(f"[{tool.plugin}] Exécution du hook post_install...")
+                hooks.post_install(hook_ctx)
 
-                logger.info(f"--- Déploiement de {plugin_name} en mode {mode} ---")
+            # 5. Récupération des identifiants et URLs
+            credentials = {}
+            if hooks and hasattr(hooks, "credentials"):
+                credentials = hooks.credentials(hook_ctx)
 
-                # Rendu des templates (si existants)
-                if mode_config.templates:
-                    compose_dir = self.render_templates(plugin_name, mode, variables)
-                else:
-                    output_dir = self.deploy_dir / plugin_name
-                    output_dir.mkdir(parents=True, exist_ok=True)
-                    compose_dir = output_dir
+            urls: List[str] = []
+            if hc and hc.url:
+                urls.append(hc.url)
+            elif mode_config.requirements.ports:
+                urls.append(f"http://localhost:{mode_config.requirements.ports[0]}")
 
-                # Exécution du script de préparation
-                self.prepare_plugin(plugin_name, mode, compose_dir, variables)
+            logs: List[str] = []
+            if hasattr(hooks, "logs"):
+                logs = hooks.logs(hook_ctx)
+            elif (tool_dir / "logs").exists():
+                logs = [str(tool_dir / "logs")]
 
-                # Lancement Docker Compose seulement si un template a été rendu
-                if mode_config.templates:
-                    self.docker_compose_up(compose_dir)
+            service_state = ServiceState(
+                plugin=tool.plugin,
+                mode=tool.mode,
+                method=tool.method,
+                version=manifest.version,
+                description=manifest.description,
+                status="installed",
+                urls=urls,
+                credentials=credentials,
+                logs=logs,
+                variables=tool.variables
+            )
 
-                # Healthcheck
-                if not self.perform_healthcheck(plugin_name, mode, compose_dir):
-                    self.report["success"] = False
-                    raise RuntimeError(f"Healthcheck échoué pour {plugin_name}")
-
-                # Collecte d'infos pour le rapport
-                service_info = self.collect_service_info(plugin_name, mode)
-                service_info["status"] = "installed"
-                self.report["services"].append(service_info)
-
-                # Marquer l'outil comme installé dans l'état
-                state[plugin_name] = service_info
-                self.save_state(state)
-
-            report_path = self.generate_report()
-            logger.info(f"Déploiement terminé avec succès. Rapport : {report_path}")
-            return report_path
+            self.state_mgr.record_installed(service_state)
+            return service_state
 
         except Exception as e:
-            logger.error(f"Échec du déploiement : {e}")
-            self.report["success"] = False
-            self.report["error"] = str(e)
-            # Ne pas supprimer tout le dossier, seulement le dossier de l'outil en échec
-            try:
-                if self.deploy_dir:
-                    # Garder le rapport et l'état, supprimer uniquement le sous-dossier de l'outil
-                    pass  # On ne fait pas de rollback destructif pour préserver les autres outils
-            except:
-                pass
+            logger.error(f"Erreur lors du déploiement de {tool.plugin} : {e}")
+            # Rollback ciblé sur cet outil
+            if hooks and hasattr(hooks, "uninstall"):
+                try:
+                    logger.info(f"[{tool.plugin}] Exécution du nettoyage / rollback...")
+                    hooks.uninstall(hook_ctx)
+                except Exception as clean_err:
+                    logger.warning(f"Erreur lors du nettoyage de {tool.plugin} : {clean_err}")
+
+            if tool.method == "docker" and self.docker_runner:
+                try:
+                    self.docker_runner.down(tool_dir)
+                except Exception:
+                    pass
             raise
+
+    def deploy(self) -> Path:
+        """Exécute le déploiement complet de la configuration."""
+        self.load_config()
+        self.validate_prerequisites()
+
+        deployed_services: List[ServiceState] = []
+
+        for tool in self.user_config.tools:
+            # Vérifier si déjà installé
+            if self.state_mgr.is_installed(tool.plugin):
+                logger.info(f"L'outil '{tool.plugin}' est déjà installé. Ignoré.")
+                deployed_services.append(self.state_mgr.get_service(tool.plugin))
+                continue
+
+            logger.info(f"Déploiement de {tool.plugin} (mode: {tool.mode}, méthode: {tool.method})...")
+            state = self.deploy_tool(tool)
+            deployed_services.append(state)
+
+        # 4. Traitement des interconnexions (chaîne SOC complète)
+        integration_results: Dict[str, Any] = {}
+        has_wazuh = any(t.plugin == "wazuh" for t in self.user_config.tools)
+        has_suricata = any(t.plugin == "suricata" for t in self.user_config.tools)
+        has_zeek = any(t.plugin == "zeek" for t in self.user_config.tools)
+        has_thehive = any(t.plugin == "thehive" for t in self.user_config.tools)
+        has_misp = any(t.plugin == "misp" for t in self.user_config.tools)
+
+        # Suricata -> Wazuh
+        if "wazuh_suricata" in self.user_config.integrations or (has_wazuh and has_suricata):
+            wazuh_tool = next(t for t in self.user_config.tools if t.plugin == "wazuh")
+            logger.info("Configuration de l'interconnexion Suricata -> Wazuh...")
+            try:
+                from socdeploy.integrations.wazuh_suricata import setup_wazuh_suricata_integration
+                res = setup_wazuh_suricata_integration(
+                    deploy_dir=self.deploy_dir,
+                    wazuh_method=wazuh_tool.method,
+                    suricata_dir=self.deploy_dir / "suricata"
+                )
+                integration_results["wazuh_suricata"] = res
+            except Exception as e:
+                logger.warning(f"Échec de l'interconnexion Suricata -> Wazuh : {e}")
+
+        # Zeek -> Wazuh
+        if "wazuh_zeek" in self.user_config.integrations or (has_wazuh and has_zeek):
+            wazuh_tool = next(t for t in self.user_config.tools if t.plugin == "wazuh")
+            logger.info("Configuration de l'interconnexion Zeek -> Wazuh...")
+            try:
+                from socdeploy.integrations.wazuh_zeek import setup_wazuh_zeek_integration
+                res = setup_wazuh_zeek_integration(
+                    deploy_dir=self.deploy_dir,
+                    wazuh_method=wazuh_tool.method,
+                    zeek_dir=self.deploy_dir / "zeek"
+                )
+                integration_results["wazuh_zeek"] = res
+            except Exception as e:
+                logger.warning(f"Échec de l'interconnexion Zeek -> Wazuh : {e}")
+
+        # Wazuh -> TheHive
+        if "wazuh_thehive" in self.user_config.integrations or (has_wazuh and has_thehive):
+            wazuh_tool = next(t for t in self.user_config.tools if t.plugin == "wazuh")
+            thehive_tool = next(t for t in self.user_config.tools if t.plugin == "thehive")
+            thehive_port = thehive_tool.variables.get("http_port", 9000)
+            logger.info("Configuration de l'interconnexion Wazuh -> TheHive...")
+            try:
+                from socdeploy.integrations.wazuh_thehive import setup_wazuh_thehive_integration
+                res = setup_wazuh_thehive_integration(
+                    deploy_dir=self.deploy_dir,
+                    wazuh_method=wazuh_tool.method,
+                    thehive_port=thehive_port
+                )
+                integration_results["wazuh_thehive"] = res
+            except Exception as e:
+                logger.warning(f"Échec de l'interconnexion Wazuh -> TheHive : {e}")
+
+        # TheHive <-> MISP
+        if "thehive_misp" in self.user_config.integrations or (has_thehive and has_misp):
+            misp_tool = next(t for t in self.user_config.tools if t.plugin == "misp")
+            misp_port = misp_tool.variables.get("https_port", 8443)
+            logger.info("Configuration de l'interconnexion TheHive <-> MISP...")
+            try:
+                from socdeploy.integrations.thehive_misp import setup_thehive_misp_integration
+                res = setup_thehive_misp_integration(
+                    deploy_dir=self.deploy_dir,
+                    misp_url=f"https://localhost:{misp_port}"
+                )
+                integration_results["thehive_misp"] = res
+            except Exception as e:
+                logger.warning(f"Échec de l'interconnexion TheHive <-> MISP : {e}")
+
+        # 5. Sauvegarde sécurisée des mots de passe dans secrets.env (chmod 600)
+        from socdeploy.utils import save_secrets_env
+        all_creds = {s.plugin: s.credentials for s in deployed_services if s.credentials}
+        save_secrets_env(self.deploy_dir, all_creds)
+
+        # Génération du rapport
+        report_path = self.deploy_dir / "report.md"
+        self.reporter.generate_markdown(self.user_config, deployed_services, report_path, integrations=integration_results)
+        self.reporter.print_summary(self.user_config, deployed_services, report_path)
+        return report_path
+
+    def destroy(self, plugin_name: Optional[str] = None) -> None:
+        """Désinstalle un outil ou l'ensemble de la stack."""
+        self.load_config()
+        state = self.state_mgr.load()
+
+        tools_to_remove = [plugin_name] if plugin_name else list(state.keys())
+
+        for p_name in tools_to_remove:
+            if p_name not in state:
+                logger.warning(f"L'outil '{p_name}' n'est pas répertorié dans la stack.")
+                continue
+
+            svc = state[p_name]
+            tool_dir = self.deploy_dir / p_name
+            hooks = self._load_hooks(p_name)
+
+            hook_ctx = {
+                "deploy_dir": tool_dir,
+                "variables": svc.variables,
+                "mode": svc.mode,
+                "method": svc.method,
+                "system": system.to_dict(),
+            }
+
+            if hooks and hasattr(hooks, "uninstall"):
+                logger.info(f"[{p_name}] Nettoyage spécifique...")
+                try:
+                    hooks.uninstall(hook_ctx)
+                except Exception as e:
+                    logger.warning(f"Erreur lors du hook uninstall de {p_name} : {e}")
+
+            if svc.method == "docker":
+                if not self.docker_runner:
+                    self.docker_runner = DockerComposeRunner()
+                self.docker_runner.down(tool_dir, remove_volumes=True)
+
+            self.state_mgr.remove_service(p_name)
+            logger.info(f"Outil '{p_name}' désinstallé avec succès.")

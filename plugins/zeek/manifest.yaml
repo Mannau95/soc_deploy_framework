@@ -1,0 +1,37 @@
+name: zeek
+display_name: "Zeek Network Security Monitor"
+version: "7.0"
+category: network
+description: "Moteur d'analyse de trafic réseau approfondi générant des métadonnées structurées (conn.log, dns.log, http.log, ssl.log, notices)"
+homepage: "https://zeek.org"
+
+modes:
+  live-capture:
+    description: "Surveillance réseau en direct sur une interface (mode passif promiscuous)"
+    methods:
+      docker:
+        templates:
+          - docker-compose.yml.j2
+        supported_os: [all]
+    requirements:
+      min_ram_mb: 2048
+      min_cpu: 2
+      ports: []
+      root: true
+      docker: true
+    variables:
+      - name: interface
+        prompt: "Interface réseau pour la capture Zeek"
+        type: choice
+        choices_from: network_interfaces
+        required: true
+      - name: extract_files
+        prompt: "Extraire automatiquement les fichiers suspects transportés par le réseau ?"
+        type: bool
+        default: false
+    healthcheck:
+      type: command
+      command: "docker exec zeek zeek --version"
+      timeout: 10
+      retries: 5
+      interval: 5

@@ -1,0 +1,15 @@
+services:
+  velociraptor:
+    image: weslambert/velociraptor:latest
+    container_name: velociraptor
+    restart: unless-stopped
+    ports:
+      - "{{ gui_port | default(8889) }}:8889"
+      - "{{ frontend_port | default(8000) }}:8000"
+    environment:
+      - VELOCIRAPTOR_USER={{ admin_user | default('admin') }}
+      - VELOCIRAPTOR_PASSWORD={{ admin_password | default('Veloc1P@ss!') }}
+      - VELOCIRAPTOR_ROLE=administrator
+    volumes:
+      - ./config:/etc/velociraptor
+      - ./data:/velociraptor

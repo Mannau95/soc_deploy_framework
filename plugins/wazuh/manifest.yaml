@@ -1,31 +1,59 @@
 name: wazuh
+display_name: "Wazuh SIEM / XDR"
 version: "4.14.0"
-description: "Wazuh SIEM"
+category: siem
+description: "Plateforme complète de sécurité : SIEM, détection d'intrusions, conformité et réponse aux incidents"
+homepage: "https://wazuh.com"
+
 modes:
   auto-install:
-    description: "Déploiement automatisé via le script officiel (recommandé)"
-    prerequisites:
-      docker: true
-    post_install:
-      healthcheck:
-        type: http
-        url: "https://localhost"
-        expected_status: 200
-        timeout: 30
-        retries: 40
-        interval: 15
+    description: "Installation tout-en-un officielle sur le serveur (Indexer + Manager + Dashboard)"
+    methods:
+      native:
+        supported_os: [debian, rhel]
+    requirements:
+      min_ram_mb: 4096
+      min_cpu: 2
+      ports: [443, 1514, 1515, 55000]
+      root: true
+      docker: false
+    variables:
+      - name: admin_password
+        prompt: "Mot de passe administrateur souhaité (optionnel, sinon généré)"
+        type: password
+        default: ""
+        required: false
+    healthcheck:
+      type: http
+      url: "https://localhost"
+      expected_status: 200
+      timeout: 30
+      retries: 30
+      interval: 10
+
   single-node:
-    description: "Indexer + Manager + Dashboard en conteneurs Docker"
-    prerequisites:
+    description: "Déploiement conteneurisé Docker (Indexer + Manager + Dashboard)"
+    methods:
+      docker:
+        templates:
+          - docker-compose.yml.j2
+        supported_os: [all]
+    requirements:
+      min_ram_mb: 4096
+      min_cpu: 2
+      ports: [443, 1514, 1515, 55000]
+      root: false
       docker: true
-      ports: [443, 55000, 1514, 1515, 1516]
-    templates:
-      - docker-compose.yml.j2
-    post_install:
-      healthcheck:
-        type: http
-        url: "https://localhost"
-        expected_status: 200
-        timeout: 30
-        retries: 40
-        interval: 15
+    variables:
+      - name: admin_password
+        prompt: "Mot de passe administrateur du Dashboard"
+        type: password
+        default: "MyS3cur3P@ss!"
+        required: true
+    healthcheck:
+      type: http
+      url: "https://localhost"
+      expected_status: 200
+      timeout: 30
+      retries: 30
+      interval: 10

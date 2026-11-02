@@ -1,0 +1,108 @@
+# 🛡️ Rapport de Déploiement — {{ config.stack_name }}
+
+*Date de génération : {{ date }}*  
+*Système hôte : {{ system.distro }} ({{ system.os_family }}) — {{ system.ram_mb }} Mo RAM — {{ system.cpu_count }} vCPU*
+
+---
+
+## 📊 Résumé des services déployés
+
+| Outil | Catégorie | Mode | Méthode | Version | Statut | Accès / URLs |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+{% for svc in services %}
+| **{{ svc.plugin }}** | {{ svc.category }} | `{{ svc.mode }}` | `{{ svc.method }}` | {{ svc.version }} | {% if svc.status == 'installed' %}✅ Opérationnel{% else %}❌ Échec{% endif %} | {{ svc.urls | join(', ') or 'N/A' }} |
+{% endfor %}
+
+---
+
+## 🔑 Détails et Identifiants par Outil
+
+{% for svc in services %}
+### 🔹 {{ svc.plugin | upper }} (`{{ svc.mode }}`)
+
+- **Description** : {{ svc.description }}
+- **Méthode** : `{{ svc.method }}`
+- **Statut** : **{{ svc.status }}**
+{% if svc.urls %}
+- **URL(s) d'accès** :
+  {% for url in svc.urls %}
+  - [{{ url }}]({{ url }})
+  {% endfor %}
+{% endif %}
+
+{% if svc.credentials %}
+#### Identifiants de connexion :
+```yaml
+{% for k, v in svc.credentials.items() %}
+{% if k != 'full_passwords' %}
+{{ k }}: {{ v }}
+{% endif %}
+{% endfor %}
+```
+{% endif %}
+
+{% if svc.logs %}
+#### Fichiers de logs :
+{% for log_path in svc.logs %}
+- `{{ log_path }}`
+{% endfor %}
+{% endif %}
+
+---
+{% endfor %}
+
+{% if integrations %}
+## 🔗 Corrélation & Interconnexions Actives
+
+{% if integrations.wazuh_suricata %}
+### 🔹 Suricata NIDS/NIPS ➔ Wazuh SIEM
+- **Statut** : **{{ integrations.wazuh_suricata.status | upper }}**
+- **Description** : {{ integrations.wazuh_suricata.description }}
+- **Source d'ingestion** : `{{ integrations.wazuh_suricata.eve_path }}`
+- **Décodeurs et règles Wazuh** : Décodeur JSON natif et règles `0445-suricata_rules.xml` (règles 86600+).
+- **Vérification** : Dans le tableau de bord Wazuh, accédez à **Security Events** et filtrez par `rule.groups: suricata`.
+{% endif %}
+
+{% if integrations.wazuh_zeek %}
+### 🔹 Zeek Network Monitor ➔ Wazuh SIEM
+- **Statut** : **{{ integrations.wazuh_zeek.status | upper }}**
+- **Description** : {{ integrations.wazuh_zeek.description }}
+- **Dossier des logs surveillés** : `{{ integrations.wazuh_zeek.zeek_logs_path }}`
+- **Événements corrélés** : `notice.log` (alertes de sécurité), `dns.log` (résolutions suspectes), `conn.log` (connexions anormales).
+{% endif %}
+
+{% if integrations.wazuh_thehive %}
+### 🔹 Wazuh SIEM ➔ TheHive SIRP (Escalade d'Incidents)
+- **Statut** : **{{ integrations.wazuh_thehive.status | upper }}**
+- **Description** : {{ integrations.wazuh_thehive.description }}
+- **Cible TheHive** : `{{ integrations.wazuh_thehive.thehive_url }}`
+- **Niveau déclencheur** : Alertes de sévérité $\ge$ {{ integrations.wazuh_thehive.trigger_level }}.
+{% endif %}
+
+{% if integrations.thehive_misp %}
+### 🔹 TheHive SIRP ↔ MISP Threat Intelligence
+- **Statut** : **{{ integrations.thehive_misp.status | upper }}**
+- **Description** : {{ integrations.thehive_misp.description }}
+- **Instance CTI** : `{{ integrations.thehive_misp.misp_url }}`
+- **Fonctionnalité** : Enrichissement automatique des observables (IP, domaines, hashs) lors de la création d'un cas.
+{% endif %}
+
+---
+{% endif %}
+
+## 🚀 Commandes Utiles & Prochaines Étapes
+
+### Vérifier les journaux en direct :
+- **Suricata (alertes)** :
+  ```bash
+  tail -f deployments/{{ config.stack_name }}/suricata/logs/eve.json | jq 'select(.event_type=="alert")'
+  ```
+- **Conteneurs Docker** :
+  ```bash
+  docker compose -f deployments/{{ config.stack_name }}/<outil>/docker-compose.yml logs -f
+  ```
+
+### Accéder à l'interface Wazuh :
+1. Ouvrez votre navigateur sur **https://localhost** (acceptez le certificat auto-signé).
+2. Connectez-vous avec l'utilisateur `admin` et le mot de passe indiqué ci-dessus.
+3. Ajoutez vos agents via le menu **Management > Deploy agent**.

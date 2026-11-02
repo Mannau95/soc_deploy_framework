@@ -1,0 +1,49 @@
+name: velociraptor
+display_name: "Velociraptor DFIR & EDR"
+version: "0.72"
+category: edr
+description: "Plateforme d'investigation numérique, de collecte d'artefacts forensiques à grande échelle (VQL) et de détection/réponse aux incidents sur les endpoints"
+homepage: "https://docs.velociraptor.app"
+
+modes:
+  server:
+    description: "Serveur central Velociraptor (Console d'administration GUI et Frontend de communication des agents)"
+    methods:
+      docker:
+        templates:
+          - docker-compose.yml.j2
+        supported_os: [all]
+    requirements:
+      min_ram_mb: 2048
+      min_cpu: 2
+      ports: [8889, 8000]
+      root: false
+      docker: true
+    variables:
+      - name: gui_port
+        prompt: "Port HTTPS de la console d'administration GUI"
+        type: int
+        default: 8889
+        required: true
+      - name: frontend_port
+        prompt: "Port HTTPS de communication pour les agents Velociraptor"
+        type: int
+        default: 8000
+        required: true
+      - name: admin_user
+        prompt: "Nom d'utilisateur administrateur de la console"
+        type: str
+        default: "admin"
+        required: true
+      - name: admin_password
+        prompt: "Mot de passe administrateur"
+        type: password
+        default: "Veloc1P@ss!"
+        required: true
+    healthcheck:
+      type: http
+      url: "https://localhost:8889"
+      expected_status: 200
+      timeout: 30
+      retries: 25
+      interval: 10

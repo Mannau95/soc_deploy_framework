@@ -1,30 +1,79 @@
 name: suricata
+display_name: "Suricata NIDS/NIPS"
 version: "8.0"
-description: "Suricata IDS/IPS"
+category: network
+description: "Moteur de détection (IDS) et prévention d'intrusion (IPS) réseau haute performance"
+homepage: "https://suricata.io"
+
 modes:
   ids:
-    description: "Suricata en mode IDS (détection passive)"
-    prerequisites:
+    description: "Suricata en mode IDS (détection passive du trafic réseau via AF_PACKET)"
+    methods:
+      docker:
+        templates:
+          - docker-compose.yml.j2
+        supported_os: [all]
+      native:
+        supported_os: [debian, rhel, suse]
+    requirements:
+      min_ram_mb: 2048
+      min_cpu: 2
+      ports: []
+      root: true
       docker: true
-    templates:
-      - docker-compose.yml.j2
-    post_install:
-      healthcheck:
-        type: command
-        command: "docker exec suricata suricata --build-info"
-        timeout: 10
-        retries: 5
-        interval: 5
+    variables:
+      - name: interface
+        prompt: "Interface réseau à surveiller"
+        type: choice
+        choices_from: network_interfaces
+        required: true
+      - name: auto_rules
+        prompt: "Télécharger et activer les règles de détection (ET Open) ?"
+        type: bool
+        default: true
+    healthcheck:
+      type: command
+      command: "docker exec suricata suricata --build-info"
+      timeout: 15
+      retries: 5
+      interval: 5
+
   ips:
-    description: "Suricata en mode IPS (prévention active)"
-    prerequisites:
+    description: "Suricata en mode IPS (prévention active via iptables & NFQUEUE)"
+    methods:
+      docker:
+        templates:
+          - docker-compose.yml.j2
+        supported_os: [all]
+      native:
+        supported_os: [debian, rhel, suse]
+    requirements:
+      min_ram_mb: 2048
+      min_cpu: 2
+      ports: []
+      root: true
       docker: true
-    templates:
-      - docker-compose.yml.j2
-    post_install:
-      healthcheck:
-        type: command
-        command: "docker exec suricata suricata --build-info"
-        timeout: 10
-        retries: 5
-        interval: 5
+    variables:
+      - name: interface
+        prompt: "Interface réseau pour l'inspection active"
+        type: choice
+        choices_from: network_interfaces
+        required: true
+      - name: auto_rules
+        prompt: "Télécharger les règles de détection (ET Open) ?"
+        type: bool
+        default: true
+      - name: pass_ssh
+        prompt: "Autoriser systématiquement le trafic SSH (port 22) ?"
+        type: bool
+        default: true
+      - name: pass_dns
+        prompt: "Autoriser systématiquement le trafic DNS (port 53) ?"
+        type: bool
+        default: true
+    healthcheck:
+      type: command
+      command: "docker exec suricata suricata --build-info"
+      timeout: 15
+      retries: 5
+      interval: 5

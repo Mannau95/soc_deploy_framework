@@ -1,0 +1,76 @@
+name: thehive
+display_name: "TheHive & Cortex"
+version: "5.3"
+category: incident
+description: "Plateforme collaborative de gestion et réponse aux incidents de sécurité (SIRP) et moteur d'orchestration d'analyses Cortex"
+homepage: "https://thehive-project.org"
+
+modes:
+  thehive-standalone:
+    description: "TheHive 5 autonome (avec Cassandra et MinIO local pour le stockage des preuves)"
+    methods:
+      docker:
+        templates:
+          - docker-compose.yml.j2
+        supported_os: [all]
+    requirements:
+      min_ram_mb: 4096
+      min_cpu: 2
+      ports: [9000]
+      root: false
+      docker: true
+    variables:
+      - name: http_port
+        prompt: "Port HTTP pour l'interface web TheHive"
+        type: int
+        default: 9000
+        required: true
+      - name: admin_password
+        prompt: "Mot de passe administrateur initial (admin@thehive.local)"
+        type: password
+        default: "secret123"
+        required: true
+    healthcheck:
+      type: http
+      url: "http://localhost:9000"
+      expected_status: 200
+      timeout: 30
+      retries: 25
+      interval: 10
+
+  thehive-cortex:
+    description: "Stack TheHive 5 couplée à Cortex 3 (enrichissement automatique des IoCs et analyseurs)"
+    methods:
+      docker:
+        templates:
+          - docker-compose.yml.j2
+        supported_os: [all]
+    requirements:
+      min_ram_mb: 6144
+      min_cpu: 4
+      ports: [9000, 9001]
+      root: false
+      docker: true
+    variables:
+      - name: http_port
+        prompt: "Port HTTP pour l'interface web TheHive"
+        type: int
+        default: 9000
+        required: true
+      - name: cortex_port
+        prompt: "Port HTTP pour Cortex"
+        type: int
+        default: 9001
+        required: true
+      - name: admin_password
+        prompt: "Mot de passe administrateur initial"
+        type: password
+        default: "secret123"
+        required: true
+    healthcheck:
+      type: http
+      url: "http://localhost:9000"
+      expected_status: 200
+      timeout: 30
+      retries: 30
+      interval: 10

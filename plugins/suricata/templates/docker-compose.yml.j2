@@ -1,5 +1,3 @@
-version: '3.7'
-
 services:
   suricata:
     image: jasonish/suricata:latest
@@ -9,9 +7,11 @@ services:
     cap_add:
       - NET_ADMIN
       - SYS_NICE
+      - NET_RAW
     volumes:
       - ./logs:/var/log/suricata
       - ./config/suricata.yaml:/etc/suricata/suricata.yaml:ro
+      - ./rules:/etc/suricata/rules
     command: >
       {% if mode == "ips" %}
       suricata -q 0 -c /etc/suricata/suricata.yaml
